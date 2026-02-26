@@ -15,11 +15,12 @@ Concurrencia estricta: 100% compatible y testada con concurrencia estricta con p
 🚀 Instalación
 Swift Package Manager (SPM)
 Añade la siguiente URL a tus dependencias de Xcode:
-https://github.com/tu-usuario/NetworkActor.git
+git@gitlab.sngular.com:os3/building-blocks/ios/communications/networkactor.git
 
 🛠️ Uso Básico
 1. Definir tu Modelo
 Asegúrate de que tu modelo implemente Codable.
+Tambien puedes enviar Data puro, y usar multipart/form
 
 Swift
 struct User: Codable {
