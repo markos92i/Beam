@@ -31,8 +31,6 @@ struct User: Codable {
 Gracias a NetworkActor, puedes realizar peticiones de forma segura desde cualquier lugar de tu app.
 
 Swift
-import NetworkActor
-
 struct TestService: ServiceProtocol {
     var service: ServiceManager
 
@@ -86,8 +84,6 @@ struct ProfileView: View {
 Ejemplo de AuthManager
 
 Swift
-import NetworkActor
-
 actor AuthManager: AuthProtocol {
     static let shared = AuthManager()
     
@@ -151,9 +147,6 @@ actor AuthManager: AuthProtocol {
 
 Ejemplo de CrashManager
 Swift
-import NetworkActor
-import FirebaseCrashlytics
-
 struct CrashManager: CrashProtocol {
     static let shared = CrashManager()
     
