@@ -82,6 +82,89 @@ struct ProfileView: View {
         }
     }
 }
+
+Ejemplo de AuthManager
+
+Swift
+import NetworkActor
+
+actor AuthManager: AuthProtocol {
+    static let shared = AuthManager()
+    
+    private var currentToken: Token?
+    private var refreshTask: Task<Token, Error>?
+    
+    var hasToken: Bool { currentToken != nil }
+    
+    var authHeader: [String: String] { get async throws { ["Authorization": "Bearer \(try await token.id)"] } }
+    
+    var token: Token {
+        get async throws {
+            if let refreshTask { return try await refreshTask.value }
+            
+            guard let currentToken else { throw AuthError.missingToken }
+            
+            if currentToken.isValid { return currentToken }
+            
+            return try await refreshToken()
+        }
+    }
+
+    private func refreshToken() async throws -> Token {
+        if let refreshTask { return try await refreshTask.value }
+
+        let task = Task { () throws -> Token in
+            defer { refreshTask = nil }
+            
+            switch await TokenRefreshService.request() {
+            case .success(let result):
+                let newToken = Token(id: result.accessToken, date: .now, expiration: result.expiration)
+                currentToken = newToken
+                return newToken
+            case .failure(let error):
+                if error.type == .unauthorized || error.type == .badRequest {
+                    _ = await LogoutService().request()
+                    await self.clear() // Limpiar al detectar credenciales inválidas
+                    throw AuthError.invalidCredentials
+                }
+                throw AuthError.failedToRefreshToken
+            }
+        }
+
+        refreshTask = task
+
+        return try await task.value
+    }
+    
+    func restore(token: Token) async {
+        currentToken = token
+        refreshTask?.cancel()
+        refreshTask = nil
+    }
+    
+    func clear() async {
+        currentToken = nil
+        refreshTask?.cancel()
+        refreshTask = nil
+    }
+}
+
+Ejemplo de CrashManager
+Swift
+import NetworkActor
+import FirebaseCrashlytics
+
+struct CrashManager: CrashProtocol {
+    static let shared = CrashManager()
+    
+    func report(error: Error, userInfo: [String: Any] = [:]) {
+        let commonInfo: [String: Any] = ["UserID": Defs.shared.userID].merging(userInfo) { (a, _) in a }
+        Crashlytics.crashlytics().record(error: error, userInfo: commonInfo)
+        print("[REPORT] CrashManager: \(error.localizedDescription)\nDetails: \(userInfo)")
+    }
+}
+
+
 ⚠️ ¿Por qué un Actor?
 A diferencia de una clase convencional, un actor en Swift:
 
