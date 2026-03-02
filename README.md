@@ -23,17 +23,17 @@ Asegúrate de que tu modelo implemente Codable.
 Tambien puedes enviar Data puro, y usar multipart/form
 
 Swift
-´´´
+```
 struct User: Codable {
     let id: Int
     let name: String
 }
-´´´
+```
 2. Realizar una Petición
 Gracias a NetworkActor, puedes realizar peticiones de forma segura desde cualquier lugar de tu app.
 
 Swift
-´´´
+```
 struct TestService: ServiceProtocol {
     var service: ServiceManager
 
@@ -52,14 +52,14 @@ struct TestService: ServiceProtocol {
         await service.request()
     }
 }
-´´´
+```
 
 🏗️ Arquitectura Recomendada
 Para evitar bloqueos en el hilo de UI (como mencionamos anteriormente), NetworkActor separa la lógica de red del ciclo de vida de la vista.
 
 Ejemplo con SwiftUI
 Swift
-´´´
+```
 struct ProfileView: View {
     @State private var user: User?
     private let api = NetworkActor()
@@ -85,12 +85,12 @@ struct ProfileView: View {
         }
     }
 }
-´´´
+```
 
 Ejemplo de AuthManager
 
 Swift
-´´´
+```
 actor AuthManager: AuthProtocol {
     static let shared = AuthManager()
     
@@ -151,11 +151,11 @@ actor AuthManager: AuthProtocol {
         refreshTask = nil
     }
 }
-´´´
+```
 
 Ejemplo de CrashManager
 Swift
-´´´
+```
 struct CrashManager: CrashProtocol {
     static let shared = CrashManager()
     
@@ -165,7 +165,7 @@ struct CrashManager: CrashProtocol {
         print("[REPORT] CrashManager: \(error.localizedDescription)\nDetails: \(userInfo)")
     }
 }
-´´´
+```
 
 ⚠️ ¿Por qué un Actor?
 A diferencia de una clase convencional, un actor en Swift:
