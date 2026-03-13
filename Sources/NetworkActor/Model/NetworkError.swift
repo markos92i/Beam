@@ -27,7 +27,7 @@ extension NetworkError: CustomNSError {
         var userInfo: [String: Any] = type.errorUserInfo
         
         if let body, let bodyString = String(data: body, encoding: .utf8) {
-            userInfo["response_body"] = bodyString
+            userInfo["ResponseBody"] = bodyString
         }
         
         return userInfo

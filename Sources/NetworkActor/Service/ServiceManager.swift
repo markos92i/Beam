@@ -249,18 +249,10 @@ extension ServiceManager {
     fileprivate func inspectAndReport(_ error: Error) {
         if let networkError = error as? NetworkError {
             if shouldIgnore(networkError) { return }
-            
-            var info: [String: Any] = [:]
-            info["ErrorType"] = String(describing: networkError.type)
-            
-            if let bodyData = networkError.body,
-               let bodyString = String(data: bodyData, encoding: .utf8) {
-                info["ResponseBody"] = String(bodyString.prefix(2000))
-            }
-            
-            failure(error, info: info)
+
+            failure(error, info: ["Error": String(describing: type(of: error))])
         } else {
-            failure(error, info: ["Type": String(describing: type(of: error))])
+            failure(error, info: ["Error": String(describing: type(of: error))])
         }
     }
     
@@ -273,8 +265,10 @@ extension ServiceManager {
 
     private func failure(_ error: Error, info: [String: Any]) {
         let requestContext = [
-            "URL": api.url?.absoluteString ?? "Invalid URL",
-            "Method": api.method.rawValue
+            "URL": (api.url?.absoluteString ?? "Invalid URL")!,
+            "Method": api.method.description,
+            "RequestBody": String(data: encode(value: api.body) ?? Data(), encoding: .utf8)?.prefix(2000) ?? "N/A",
+            "RequestData": String(data: api.data ?? Data(), encoding: .utf8)?.prefix(2000) ?? "N/A"
         ].merging(info) { $1 }
         
         crash?.report(error: error, userInfo: requestContext)
