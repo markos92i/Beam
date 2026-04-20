@@ -1,10 +1,3 @@
-//
-//  URLProtocolStub.swift
-//  Randstad Empleo
-//
-//  Created by Marcos del Castillo Camacho on 12/3/25.
-//  Copyright © 2025 SNGULAR. All rights reserved.
-//
 
 import Foundation
 @testable import NetworkActor
