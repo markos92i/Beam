@@ -1,6 +1,6 @@
 //
 //  ContentType.swift
-//  Randstad Empleo
+//  NetworkActor
 //
 //  Created by Marcos del Castillo Camacho on 10/3/25.
 //  Copyright © 2025 SNGULAR. All rights reserved.

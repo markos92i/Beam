@@ -1,6 +1,6 @@
 //
 //  NetworkQueue.swift
-//  Randstad Empleo
+//  NetworkActor
 //
 //  Created by Marcos del Castillo Camacho on 19/9/24.
 //  Copyright © 2024 SNGULAR. All rights reserved.

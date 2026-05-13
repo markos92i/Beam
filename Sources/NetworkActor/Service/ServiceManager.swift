@@ -1,6 +1,6 @@
 //
 //  ServiceManager.swift
-//  Randstad Empleo
+//  NetworkActor
 //
 //  Created by Marcos del Castillo Camacho on 12/3/25.
 //  Copyright © 2025 SNGULAR. All rights reserved.

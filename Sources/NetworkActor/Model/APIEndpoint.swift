@@ -1,6 +1,6 @@
 //
 //  APIEndpoint.swift
-//  Randstad Empleo
+//  NetworkActor
 //
 //  Created by Marcos del Castillo Camacho on 6/3/25.
 //  Copyright © 2025 SNGULAR. All rights reserved.
