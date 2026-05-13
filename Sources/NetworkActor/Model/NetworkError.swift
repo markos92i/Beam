@@ -19,7 +19,7 @@ public struct NetworkError: Error {
 }
 
 extension NetworkError: CustomNSError {
-    public static var errorDomain: String { Bundle.main.bundleIdentifier ?? "es.randstad.candidate" }
+    public static var errorDomain: String { Bundle.main.bundleIdentifier ?? "network.actor" }
     
     public var errorCode: Int { type.rawValue }
     
