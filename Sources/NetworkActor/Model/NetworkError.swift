@@ -32,4 +32,11 @@ extension NetworkError: CustomNSError {
         
         return userInfo
     }
+    
+    public var logged: Bool {
+        switch type {
+        case .canceled: false // Ignore cancelled by user
+        default: true
+        }
+    }
 }

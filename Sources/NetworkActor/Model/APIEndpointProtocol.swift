@@ -45,7 +45,6 @@ extension APIEndpointProtocol {
             urlComponents?.queryItems = params
         }
 
-
         guard let url = urlComponents?.url else { return nil }
         
         var request = URLRequest(url: url)

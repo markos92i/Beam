@@ -162,29 +162,28 @@ public actor NetworkActor: NetworkProtocol {
     }
     
     private func mapError(_ error: Error) -> NetworkError {
-        // Si ya es nuestro error (lanzado por validateResponse o save), lo propagamos
         if let networkError = error as? NetworkError {
             return networkError
         }
         
         // Errores de URLSession (Conectividad, DNS, SSL)
         guard let urlError = error as? URLError else {
-            return NetworkError(type: .unknown)
+            return .init(type: .unknown)
         }
         
         switch urlError.code {
         case .timedOut:
-            return NetworkError(type: .timedOut)
+            return .init(type: .timedOut)
         case .cancelled:
-            return NetworkError(type: .canceled)
+            return .init(type: .canceled)
         case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed:
-            return NetworkError(type: .noConnection)
+            return .init(type: .noConnection)
         case .secureConnectionFailed, .serverCertificateHasBadDate, .serverCertificateUntrusted:
-            return NetworkError(type: .sslError)
+            return .init(type: .sslError)
         case .cannotFindHost, .dnsLookupFailed:
-            return NetworkError(type: .serverError)
+            return .init(type: .serverError)
         default:
-            return NetworkError(type: .unknown)
+            return .init(type: .unknown)
         }
     }
         

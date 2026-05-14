@@ -19,5 +19,6 @@ public protocol AuthProtocol: Sendable {
     var token: Token { get async throws }
     
     func set(token: Token) async
+    func invalidate() async
     func clear() async
 }
