@@ -50,11 +50,11 @@ extension ContentType {
         switch self {
         case .urlEncoded: "application/x-www-form-urlencoded"
         case .data: "application/octet-stream"
-        case .json: "application/json; charset=UTF-8"
-        case .multipart(let boundary): "multipart/form-data; boundary=\(boundary)"
-        case .text(let charset): "text/plain; charset=\(charset)"
-        case .xml: "application/xml"
         case .pdf: "application/pdf"
+        case .json(let charset): "application/json; charset=\(charset.value)"
+        case .text(let charset): "text/plain; charset=\(charset.value)"
+        case .xml(let charset): "application/xml; charset=\(charset.value)"
+        case .multipart(let boundary): "multipart/form-data; boundary=\(boundary)"
         case .image(let format): "image/\(format.rawValue)"
         case .custom(let customValue): customValue
         }
