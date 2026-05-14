@@ -30,7 +30,7 @@ public struct ServiceManager: Sendable {
     
     public init(
         network: NetworkActor,
-        auth: AuthProtocol? = nil,
+        auth: (any AuthProtocol)? = nil,
         crash: CrashProtocol? = nil,
         api: ServicePayload,
         encoder: JSONEncoder = defaultEncoder,
