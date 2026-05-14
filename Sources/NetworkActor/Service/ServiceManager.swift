@@ -10,7 +10,7 @@ import SwiftUI
 
 public struct ServiceManager: Sendable {
     public var network: NetworkActor
-    public var auth: AuthProtocol? = nil
+    public var auth: (any AuthProtocol)? = nil
     public var crash: CrashProtocol? = nil
     public var api: ServicePayload
     public var encoder: JSONEncoder

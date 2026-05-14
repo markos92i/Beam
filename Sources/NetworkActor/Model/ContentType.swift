@@ -8,11 +8,41 @@
 
 import Foundation
 
-public enum ContentType {
+public enum ContentType: Sendable {
     case urlEncoded
     case data
-    case json
-    case multipart(String)
+    case pdf
+    case json(charset: Charset = .utf8)
+    case text(charset: Charset = .utf8)
+    case xml(charset: Charset = .utf8)
+    case multipart(boundary: String)
+    case image(format: ImageFormat)
+    case custom(String)
+    
+    public enum Charset: Sendable, Equatable {
+        case utf8
+        case utf16
+        case ascii
+        case iso8859_1
+        case custom(String)
+        
+        public var value: String {
+            switch self {
+            case .utf8: "UTF-8"
+            case .utf16: "UTF-16"
+            case .ascii: "US-ASCII"
+            case .iso8859_1: "ISO-8859-1"
+            case .custom(let value): value
+            }
+        }
+    }
+    
+    public enum ImageFormat: String, Sendable {
+        case jpeg
+        case png
+        case webp
+        case gif
+    }
 }
 
 extension ContentType {
@@ -22,8 +52,13 @@ extension ContentType {
         case .data: "application/octet-stream"
         case .json: "application/json; charset=UTF-8"
         case .multipart(let boundary): "multipart/form-data; boundary=\(boundary)"
+        case .text(let charset): "text/plain; charset=\(charset)"
+        case .xml: "application/xml"
+        case .pdf: "application/pdf"
+        case .image(let format): "image/\(format.rawValue)"
+        case .custom(let customValue): customValue
         }
     }
     
-    public var header: [String : String] { ["Content-Type": value] }
+    public var header: [String: String] { ["Content-Type": value] }
 }

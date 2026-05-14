@@ -18,6 +18,6 @@ public protocol AuthProtocol: Sendable {
     var authHeader: [String: String] { get async throws }
     var token: Token { get async throws }
     
-    func restore(token: Token) async
+    func set(token: Token) async
     func clear() async
 }

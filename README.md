@@ -44,7 +44,7 @@ struct TestService: ServiceProtocol {
                              api: .init(method: .post,
                                         baseURL: URLs.api,
                                         path: "/yourPath/\(id)",
-                                        headers: APIConstants.headers.merging(ContentType.json.header) { $1 },
+                                        headers: APIConstants.headers.merging(ContentType.json().header) { $1 },
                                         body: body))
     }
     
