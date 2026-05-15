@@ -47,12 +47,13 @@ struct NetworkTests {
             return StubResponse(data: responseData, response: urlResponse, error: nil)
         }
 
-        let service = ServiceManager(network: .init(configuration: mockConfig), api: endpoint.api)
+        let service = ServiceManager<ResponseMock, ServiceError<Void>>(network: .init(configuration: mockConfig), api: endpoint.api)
         
-        let result: Result<ResponseMock, ServiceError<Void>> = await service.request()
-        switch result {
-        case .success: #expect(true)
-        case .failure: #expect(Bool(false))
+        do {
+            let result: ResponseMock = try await service.request()
+            #expect(true)
+        } catch {
+            #expect(Bool(false))
         }
     }
     
@@ -69,12 +70,13 @@ struct NetworkTests {
             return StubResponse(data: nil, response: urlResponse, error: nil)
         }
         
-        let service = ServiceManager(network: .init(configuration: mockConfig), api: endpoint.api)
-        
-        let result: Result<Void, ServiceError<Void>> = await service.request()
-        switch result {
-        case .success(_): #expect(Bool(false))
-        case .failure(_): #expect(Bool(true))
+        let service = ServiceManager<ResponseMock, ServiceError<Void>>(network: .init(configuration: mockConfig), api: endpoint.api)
+
+        do {
+            let result: ResponseMock = try await service.request()
+            #expect(true)
+        } catch {
+            #expect(Bool(false))
         }
     }
 }

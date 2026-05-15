@@ -8,12 +8,14 @@
 
 import SwiftUI
 
-public struct ServiceManager: Sendable {
+public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
     public var network: NetworkActor
     public var auth: (any AuthProtocol)? = nil
     public var crash: CrashProtocol? = nil
     public var api: ServicePayload
     public var config: ServiceConfig
+    
+    private let serializer: Serializer
     
     public init(
         network: NetworkActor,
@@ -27,231 +29,108 @@ public struct ServiceManager: Sendable {
         self.crash = crash
         self.api = api
         self.config = config
-    }
-
-    @concurrent public func cache<Success: Sendable, Failure: Sendable>(file: String) async -> Result<Success, ServiceError<Failure>> {
-        guard let url = Bundle.main.url(forResource: file, withExtension: nil),
-              let data = try? Data(contentsOf: url),
-              let decoded: Success = decode(data: data) else { return .failure(.init(type: .decode)) }
-
-        return .success(decoded)
+        
+        self.serializer = Serializer(encoder: config.encoder, decoder: config.decoder)
     }
 
     // MARK: - Throwing Core Implementation
-    @concurrent public func request<Success: Sendable, Failure: Sendable>(
-        failureType: Failure.Type = Failure.self
-    ) async throws(ServiceError<Failure>) -> Success {
+    @concurrent private func performOperation(operation: (APIEndpoint) async throws -> Success) async throws(ServiceError<Failure>) -> Success {
         for attempt in 0...config.maxRetries {
-            let api = prepare(payload: api)
-            guard let authenticatedApi = await auth(api: api) else {
-                throw ServiceError<Failure>(type: .unauthorized)
-            }
-            
             do {
-                let data: Data = try await network.request(api: authenticatedApi)
-                
-                guard let decoded: Success = decode(data: data) else {
-                    throw ServiceError<Failure>(type: .decode)
-                }
-                return decoded
+                let api = try await prepare(payload: self.api)
+
+                return try await operation(api)
             } catch let error as NetworkError where error.type == .unauthorized {
                 guard !(attempt == config.maxRetries), let auth else {
                     failure(error)
-                    throw mapToServiceError(error: error, type: Failure.self)
+                    throw mapError(error)
                 }
                 
                 await auth.invalidate()
             } catch {
                 failure(error)
-                throw mapToServiceError(error: error, type: Failure.self)
+                throw mapError(error)
             }
         }
         
         throw ServiceError<Failure>(type: .unknown)
     }
-    
-    @concurrent public func upload<Success: Sendable, Failure: Sendable>(
-        failureType: Failure.Type = Failure.self
-    ) async throws(ServiceError<Failure>) -> Success {
-        for attempt in 0...config.maxRetries {
-            let api = prepare(payload: api)
-            guard let authenticatedApi = await auth(api: api) else {
-                throw ServiceError<Failure>(type: .unauthorized)
-            }
-            
-            do {
-                let data: Data = try await network.upload(api: authenticatedApi, data: api.data ?? Data())
-                
-                guard let decoded: Success = decode(data: data) else {
-                    throw ServiceError<Failure>(type: .decode)
-                }
-                return decoded
-            } catch let error as NetworkError where error.type == .unauthorized {
-                guard !(attempt == config.maxRetries), let auth else {
-                    failure(error)
-                    throw mapToServiceError(error: error, type: Failure.self)
-                }
-                
-                await auth.invalidate()
-            } catch {
-                failure(error)
-                throw mapToServiceError(error: error, type: Failure.self)
-            }
-        }
         
-        throw ServiceError<Failure>(type: .unknown)
-    }
-    
-    @concurrent public func download<Failure: Sendable>(
-        failureType: Failure.Type = Failure.self
-    ) async throws(ServiceError<Failure>) -> URL {
-        for attempt in 0...config.maxRetries {
-            let api = prepare(payload: api)
-            guard let authenticatedApi = await auth(api: api) else {
-                throw ServiceError<Failure>(type: .unauthorized)
+    @concurrent public func request() async throws(ServiceError<Failure>) -> Success {
+        try await performOperation() { api in
+            let data: Data = try await network.request(api: api)
+            guard let decoded: Success = try serializer.decode(data: data) else {
+                throw ServiceError<Failure>(type: .decode)
             }
-            
-            do {
-                let url: URL = try await network.download(api: authenticatedApi)
-                return url
-            } catch let error as NetworkError where error.type == .unauthorized {
-                guard !(attempt == config.maxRetries), let auth else {
-                    failure(error)
-                    throw mapToServiceError(error: error, type: Failure.self)
-                }
-                
-                await auth.invalidate()
-            } catch {
-                failure(error)
-                throw mapToServiceError(error: error, type: Failure.self)
-            }
+            return decoded
         }
-        
-        throw ServiceError<Failure>(type: .unknown)
     }
 
-    // MARK: - Result Wrappers (Backward Compatibility)
-    @concurrent public func request<Success: Sendable, Failure: Sendable>() async -> Result<Success, ServiceError<Failure>> {
-        do {
-            return .success(try await request(failureType: Failure.self))
-        } catch {
-            return .failure(error)
+    @concurrent public func upload() async throws(ServiceError<Failure>) -> Success {
+        try await performOperation() { api in
+            let data: Data = try await network.upload(api: api, data: api.data ?? Data())
+            guard let decoded: Success = try serializer.decode(data: data) else {
+                throw ServiceError<Failure>(type: .decode)
+            }
+            return decoded
         }
     }
     
-    @concurrent public func upload<Success: Sendable, Failure: Sendable>() async -> Result<Success, ServiceError<Failure>> {
+    @concurrent public func file(file: String) async throws(ServiceError<Failure>) -> Success {
         do {
-            return .success(try await upload(failureType: Failure.self))
+            guard let url = Bundle.main.url(forResource: file, withExtension: nil) else {
+                throw ServiceError<Failure>(type: .invalidURL)
+            }
+            let data = try Data(contentsOf: url)
+            guard let decoded: Success = try serializer.decode(data: data) else {
+                throw ServiceError<Failure>(type: .decode)
+            }
+            return decoded
         } catch {
-            return .failure(error)
-        }
-    }
-    
-    @concurrent public func download<Failure: Sendable>() async -> Result<URL, ServiceError<Failure>> {
-        do {
-            return .success(try await download(failureType: Failure.self))
-        } catch {
-            return .failure(error)
+            throw mapError(error)
         }
     }
     
     // MARK: - Private Helpers
-    private func prepare(payload: ServicePayload) -> APIEndpoint {
-        return .init(method: payload.method,
-                     baseURL: payload.baseURL,
-                     path: payload.path,
-                     params: payload.params,
-                     headers: payload.headers,
-                     body: encode(value: payload.body),
-                     data: payload.data,
-                     timeout: payload.timeout)
-    }
-    
-    private func encode<Value>(value: Value) -> Data? {
-        switch value {
-        case let value as Data: return value
-        case let value as Codable:
-            do {
-                return try config.encoder.encode(value)
-            } catch let error as EncodingError {
-                switch error {
-                case .invalidValue(let key, let value):
-                    failure(error, info: ["EncodingError": "invalidValue(key: \(key), value: \(value))"])
-                default:
-                    failure(error, info: ["EncodingError": "unkown"])
-                }
-                return nil
-            } catch {
-                return nil
-            }
-        case let value as String: return value.data(using: .utf8)
-        default: return nil
-        }
-    }
-    
-    private func decode<Value>(data: Data) -> Value? {
-        switch Value.self {
-        case is Data.Type: return data as? Value
-        case is Bool.Type: return Bool(String(data: data, encoding: .utf8) ?? "false") as? Value
-        case let type as Codable.Type:
-            do {
-                return try config.decoder.decode(type, from: data) as? Value
-            } catch let error as DecodingError {
-                switch error {
-                case .typeMismatch(let key, let value):
-                    failure(error, info: ["DecodingError": "typeMismatch(key: \(key), value: \(value))"])
-                case .valueNotFound(let key, let value):
-                    failure(error, info: ["DecodingError": "valueNotFound(key: \(key), value: \(value))"])
-                case .keyNotFound(let key, let value):
-                    failure(error, info: ["DecodingError": "keyNotFound(key: \(key), value: \(value))"])
-                case .dataCorrupted(let key):
-                    failure(error, info: ["DecodingError": "dataCorrupted(key: \(key))"])
-                default:
-                    failure(error, info: ["DecodingError": "unkown"])
-                }
-                return nil
-            } catch {
-                return nil
-            }
-        case is String.Type: return String(data: data, encoding: .utf8) as? Value
-        case is UIImage.Type: return UIImage(data: data) as? Value
-        case is Void.Type: return () as? Value
-        default: return nil
-        }
-    }
-
-    @concurrent private func auth(api: APIEndpoint) async -> APIEndpoint? {
-        guard let auth else { return api }
+    @concurrent private func prepare(payload: ServicePayload) async throws -> APIEndpoint {
+        var api = APIEndpoint(
+            method: payload.method,
+            baseURL: payload.baseURL,
+            path: payload.path,
+            params: payload.params,
+            headers: payload.headers,
+            body: try serializer.encode(payload.body),
+            data: payload.data,
+            timeout: payload.timeout
+        )
         
-        do {
-            var api = api
-            api.headers = api.headers.merging(try await auth.authHeader) { $1 }
-            return api
-        } catch AuthError.missingToken {
-            print("AuthError.missingToken")
-            return nil
-        } catch AuthError.failedToRefreshToken {
-            print("AuthError.failedToRefreshToken")
-            return nil
-        } catch AuthError.invalidCredentials {
-            print("AuthError.invalidCredentials")
-            return nil
-        } catch {
-            return nil
+        if let auth {
+            api.headers.merge(try await auth.authHeader) { $1 }
         }
+        
+        return api
     }
-    
+        
     @concurrent public func cancel() async {
         await network.cancel()
     }
 }
 
+extension ServiceManager where Success == URL {
+    @concurrent public func download() async throws(ServiceError<Failure>) -> URL {
+        try await performOperation() { api in
+            try await network.download(api: api)
+        }
+    }
+}
+
 // MARK: Error management and reporting
 extension ServiceManager {
-    private func mapToServiceError<Failure: Sendable>(error: Error, type: Failure.Type) -> ServiceError<Failure> {
-        if let serviceError = error as? ServiceError<Failure> {
-            return serviceError
-        }
+    private func mapError(_ error: Error) -> ServiceError<Failure> {
+        if let serviceError = error as? ServiceError<Failure> { return serviceError }
+        if error is AuthError { return ServiceError<Failure>(type: .unauthorized) }
+        if error is EncodingError { return ServiceError<Failure>(type: .encode) }
+        if error is DecodingError { return ServiceError<Failure>(type: .decode) }
         
         guard let networkError = error as? NetworkError else {
             return ServiceError<Failure>(type: .unknown)
@@ -259,7 +138,7 @@ extension ServiceManager {
         
         var decodedErrorBody: Failure? = nil
         if let bodyData = networkError.body {
-            decodedErrorBody = decode(data: bodyData)
+            decodedErrorBody = try? serializer.decode(data: bodyData)
         }
         
         return ServiceError<Failure>(type: networkError.type, body: decodedErrorBody)
@@ -275,7 +154,7 @@ extension ServiceManager {
         let requestContext = [
             "URL": (api.url?.absoluteString ?? "Invalid URL")!,
             "Method": api.method.description,
-            "RequestBody": String(data: encode(value: api.body) ?? Data(), encoding: .utf8)?.prefix(2000) ?? "N/A",
+            "RequestBody": String(data: (try? serializer.encode(api.body)) ?? Data(), encoding: .utf8)?.prefix(2000) ?? "N/A",
             "RequestData": String(data: api.data ?? Data(), encoding: .utf8)?.prefix(2000) ?? "N/A"
         ].merging(info) { $1 }
         
