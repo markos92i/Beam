@@ -71,7 +71,7 @@ private struct Stub {
 struct StubResponse {
     let data: Data?
     let response: URLResponse?
-    let error: ServiceErrorType?
+    let error: ServiceError<Void>?
 }
 
 struct EndpointMock {

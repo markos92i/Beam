@@ -7,16 +7,133 @@
 
 import Foundation
 
-public struct ServiceError<Value: Sendable>: Error, Equatable {
-    public var type: ServiceErrorType
-    public var body: Value?
+public enum ServiceError<Value: Sendable>: Error, Identifiable, CustomStringConvertible {
+    case encode
+    case decode
+    case storage
+    case invalidURL
+    case invalidFormat
+    case noResponse
     
-    public init(type: ServiceErrorType, body: Value? = nil) {
-        self.type = type
-        self.body = body
+    case canceled
+    case timedOut
+    case noConnection
+    case serverUnreachable
+    case sslError
+    case unknown
+
+    // Errores HTTP con valor asociado genérico (el Dto de error del backend)
+    case badRequest(Value?)
+    case unauthorized(Value?)
+    case forbidden(Value?)
+    case notFound(Value?)
+    case conflict(Value?)
+    case serverError(Value?)
+    
+    case unexpectedCode(statusCode: Int, body: Value?)
+
+    // MARK: - Identifiable Compliance
+    /// Sustituye al antiguo 'Int' del enum. Mantiene los mismos códigos estáticos de tu arquitectura.
+    public var code: Int {
+        switch self {
+        case .encode: 0
+        case .decode: 1
+        case .storage: 2
+        case .invalidURL: 3
+        case .invalidFormat: 4
+        case .noResponse: 5
+        
+        case .canceled: 8
+        case .timedOut: 9
+        case .noConnection: 10
+        case .serverUnreachable: 11
+        case .sslError: 12
+        case .unknown: 99
+
+        case .badRequest: 400
+        case .unauthorized: 401
+        case .forbidden: 403
+        case .notFound: 404
+        case .conflict: 409
+        case .serverError: 500
+            
+        case .unexpectedCode(let statusCode, _): statusCode
+        }
     }
-    
+
+    public var id: Int { code }
+
+    public var title: String {
+        switch self {
+        case .encode:           "Petición incorrecta"
+        case .decode:           "Respuesta incorrecta"
+        case .storage:          "Error de almacenamiento"
+        case .invalidURL:       "URL incorrecta"
+        case .invalidFormat:    "Formato incorrecto"
+        case .noResponse:       "Sin respuesta"
+
+        case .canceled:         "Operación cancelada"
+        case .timedOut:         "Demasiado tiempo sin respuesta"
+        case .noConnection:     "Sin internet"
+        case .serverUnreachable:"Servidor no alcanzable"
+        case .sslError:         "Fallo SSL"
+        case .unknown:          "Error desconocido"
+            
+        case .badRequest:       "Petición incorrecta"
+        case .unauthorized:     "Sesión expirada"
+        case .forbidden:        "Acceso prohibido"
+        case .notFound:         "Recurso no encontrado"
+        case .conflict:         "Conflicto"
+        case .serverError:      "Fallo en el servidor"
+            
+        case .unexpectedCode:   "Error inesperado"
+        }
+    }
+
+    public var description: String {
+        switch self {
+        case .encode:           "El contenido de la peticíon no es correcto"
+        case .decode:           "El contenido de la respuesta no es correcto"
+        case .storage:          "El contenido descargado no se ha podido guardar en el almacenamiento"
+        case .invalidURL:       "La dirección es incorrecta"
+        case .invalidFormat:    "El contenido de respuesta tiene un formato incorrecto"
+        case .noResponse:       "No se ha recibido ninguna respuesta"
+            
+        case .canceled:         "La operación se ha cancelado antes de terminar"
+        case .timedOut:         "Se ha superado el tiempo limite de espera sin obtener respuesta"
+        case .noConnection:     "No hay conexión a internet, comprueba la red wifi o telefónica"
+        case .serverUnreachable:"No se ha podido llegar al servidor, algun punto intermedio ha fallado"
+        case .sslError:         "No se ha podido establecer una comunicación segura mediante SSL"
+        case .unknown:          "Ha ocurrido un error desconocido"
+
+        case .badRequest:       "Petición incorrecta o mal formada"
+        case .unauthorized:     "No tienes autorización para realizar esta operación"
+        case .forbidden:        "No tienes los permisos necesarios para realizar esta operación"
+        case .notFound:         "No se ha encontrado el recurso en la url especificada"
+        case .conflict:         "No se ha podido completar la operación debido a un conflicto"
+        case .serverError:      "El servidor ha tenido un fallo interno"
+            
+        case .unexpectedCode:   "Ha ocurrido un error inesperado"
+        }
+    }
+}
+
+// MARK: - Equatable Compliance
+extension ServiceError: Equatable {
     public static func == (lhs: ServiceError<Value>, rhs: ServiceError<Value>) -> Bool {
-        lhs.type == rhs.type
+        lhs.code == rhs.code
+    }
+}
+
+extension ServiceError: CustomNSError {
+    public static var errorDomain: String { Bundle.main.bundleIdentifier ?? "network.actor" }
+    
+    public var errorCode: Int { code }
+    
+    public var errorUserInfo: [String: Any] {
+        [
+            NSLocalizedDescriptionKey: "\(code): \(title)",
+            NSLocalizedFailureReasonErrorKey: description
+        ]
     }
 }
