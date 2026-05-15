@@ -1,14 +1,13 @@
 //
-//  NetworkErrorType.swift
+//  ServiceErrorType.swift
 //  NetworkActor
 //
 //  Created by Marcos del Castillo Camacho on 10/2/25.
-//  Copyright © 2025 SNGULAR. All rights reserved.
 //
 
 import Foundation
 
-public enum NetworkErrorType: Int, Error, Identifiable, CustomStringConvertible {
+public enum ServiceErrorType: Int, Error, Identifiable, CustomStringConvertible {
     case encode = 0
     case decode = 1
     case storage = 2
@@ -89,8 +88,8 @@ public enum NetworkErrorType: Int, Error, Identifiable, CustomStringConvertible 
     }
 }
 
-extension NetworkErrorType: CustomNSError {
-    public static var errorDomain: String { Bundle.main.bundleIdentifier ?? "es.randstad.candidate" }
+extension ServiceErrorType: CustomNSError {
+    public static var errorDomain: String { Bundle.main.bundleIdentifier ?? "network.actor" }
     
     public var errorCode: Int { rawValue }
     

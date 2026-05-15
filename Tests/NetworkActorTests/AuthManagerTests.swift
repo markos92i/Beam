@@ -3,7 +3,6 @@
 //  Randstad Empleo
 //
 //  Created by Marcos del Castillo Camacho on 13/05/2026.
-//  Copyright © 2026 SNGULAR. All rights reserved.
 //
 
 import Testing

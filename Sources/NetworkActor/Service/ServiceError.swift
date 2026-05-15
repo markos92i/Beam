@@ -3,17 +3,15 @@
 //  NetworkActor
 //
 //  Created by Marcos del Castillo Camacho on 12/3/25.
-//  Copyright © 2025 SNGULAR. All rights reserved.
 //
-
 
 import Foundation
 
 public struct ServiceError<Value: Sendable>: Error, Equatable {
-    public var type: NetworkErrorType
+    public var type: ServiceErrorType
     public var body: Value?
     
-    public init(type: NetworkErrorType, body: Value? = nil) {
+    public init(type: ServiceErrorType, body: Value? = nil) {
         self.type = type
         self.body = body
     }

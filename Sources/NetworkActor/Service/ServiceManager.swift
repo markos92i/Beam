@@ -3,7 +3,6 @@
 //  NetworkActor
 //
 //  Created by Marcos del Castillo Camacho on 12/3/25.
-//  Copyright © 2025 SNGULAR. All rights reserved.
 //
 
 import SwiftUI
@@ -32,30 +31,28 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
         
         self.serializer = Serializer(encoder: config.encoder, decoder: config.decoder)
     }
-
+    
     // MARK: - Throwing Core Implementation
     @concurrent private func performOperation(operation: (APIEndpoint) async throws -> Success) async throws(ServiceError<Failure>) -> Success {
         for attempt in 0...config.maxRetries {
             do {
                 let api = try await prepare(payload: self.api)
-
+                
                 return try await operation(api)
-            } catch let error as NetworkError where error.type == .unauthorized {
+            } catch let error as AuthError {
                 guard !(attempt == config.maxRetries), let auth else {
-                    failure(error)
                     throw mapError(error)
                 }
                 
                 await auth.invalidate()
             } catch {
-                failure(error)
                 throw mapError(error)
             }
         }
         
         throw ServiceError<Failure>(type: .unknown)
     }
-        
+    
     @concurrent public func request() async throws(ServiceError<Failure>) -> Success {
         try await performOperation() { api in
             let data: Data = try await network.request(api: api)
@@ -65,7 +62,7 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
             return decoded
         }
     }
-
+    
     @concurrent public func upload() async throws(ServiceError<Failure>) -> Success {
         try await performOperation() { api in
             let data: Data = try await network.upload(api: api, data: api.data ?? Data())
@@ -110,7 +107,7 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
         
         return api
     }
-        
+    
     @concurrent public func cancel() async {
         await network.cancel()
     }
@@ -128,28 +125,70 @@ extension ServiceManager where Success == URL {
 extension ServiceManager {
     private func mapError(_ error: Error) -> ServiceError<Failure> {
         if let serviceError = error as? ServiceError<Failure> { return serviceError }
-        if error is AuthError { return ServiceError<Failure>(type: .unauthorized) }
-        if error is EncodingError { return ServiceError<Failure>(type: .encode) }
-        if error is DecodingError { return ServiceError<Failure>(type: .decode) }
         
-        guard let networkError = error as? NetworkError else {
-            return ServiceError<Failure>(type: .unknown)
+        var finalServiceError: ServiceError<Failure>
+        var extraInfo: [String: Any] = [:]
+        
+        switch error {
+        case is AuthError:
+            finalServiceError = ServiceError<Failure>(type: .unauthorized)
+        case let fileError as FileError:
+            switch fileError {
+            case .invalidTargetURL:
+                finalServiceError = ServiceError<Failure>(type: .storage)
+            case .removeFailed(let error):
+                finalServiceError = ServiceError<Failure>(type: .storage)
+            case .copyFailed(let error):
+                finalServiceError = ServiceError<Failure>(type: .storage)
+            }
+
+        case let serializerError as SerializerError:
+            switch serializerError {
+            case .encoding(_, let info):
+                finalServiceError = ServiceError<Failure>(type: .encode)
+                extraInfo = info
+            case .decoding(_, let info):
+                finalServiceError = ServiceError<Failure>(type: .decode)
+                extraInfo = info
+            }
+            
+        case let networkError as NetworkError:
+            // Intentamos decodificar los bytes del body de red al Dto genérico 'Failure' que espera la App
+            var decodedErrorBody: Failure? = nil
+            if let bodyData = networkError.body {
+                decodedErrorBody = try? serializer.decode(data: bodyData)
+            }
+            
+            // Creamos el error de servicio con el Dto tipado listo para la UI/Presenters
+            finalServiceError = ServiceError<Failure>(type: networkError.type, body: decodedErrorBody)
+            
+            // Si el error de red no debe loguearse (como las cancelaciones explícitas), capamos el reporte aquí
+            if !networkError.logged { return finalServiceError }
+            
+        default:
+            finalServiceError = ServiceError<Failure>(type: .unknown)
+            extraInfo["Context"] = "Error no controlado o fuera del dominio de red/parseo."
         }
         
-        var decodedErrorBody: Failure? = nil
-        if let bodyData = networkError.body {
-            decodedErrorBody = try? serializer.decode(data: bodyData)
-        }
+        // 3. Reporte único centralizado
+        reportFailure(error: error, serviceErrorType: finalServiceError.type, info: extraInfo)
         
-        return ServiceError<Failure>(type: networkError.type, body: decodedErrorBody)
+        return finalServiceError
     }
-
-    private func failure(_ error: NetworkError, info: [String: Any] = [:]) {
-        guard error.logged else { return }
-
-        failure(error, info: ["Error": String(describing: type(of: error))])
+    
+    private func reportFailure(error: Error, serviceErrorType: ServiceErrorType, info: [String: Any]) {
+        // Formateamos un contexto de red súper rico para la pestaña de "Log" o "Keys" de Crashlytics
+        let requestContext: [String: Any] = [
+            "Request": "[\(api.method.description)] \(api.url?.absoluteString ?? "Invalid URL")",
+            "RequestBody": String(data: (try? serializer.encode(api.body)) ?? Data(), encoding: .utf8)?.prefix(2000) ?? "N/A",
+            "RequestData": String(data: api.data ?? Data(), encoding: .utf8)?.prefix(2000) ?? "N/A",
+            "ServiceErrorType": String(describing: serviceErrorType),
+        ].merging(info) { $1 }
+        
+        // Enviamos el reporte
+        crash?.report(error: error, userInfo: requestContext)
     }
-
+    
     private func failure(_ error: Error, info: [String: Any] = [:]) {
         let requestContext = [
             "URL": (api.url?.absoluteString ?? "Invalid URL")!,

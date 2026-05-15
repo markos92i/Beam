@@ -15,7 +15,7 @@ Concurrencia estricta: 100% compatible y testada con concurrencia estricta con p
 🚀 Instalación
 Swift Package Manager (SPM)
 Añade la siguiente URL a tus dependencias de Xcode:
-git@gitlab.sngular.com:os3/building-blocks/ios/communications/networkactor.git
+git@github.com:markos92i/NetworkActor.git
 
 🛠️ Uso Básico
 1. Definir tu Modelo

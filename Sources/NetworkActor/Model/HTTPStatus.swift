@@ -285,6 +285,6 @@ extension HTTPURLResponse {
 
     var status: HTTPStatus? { HTTPStatus(rawValue: statusCode) }
 
-    var contentType: String? { allHeaderFields["Content-Type"] as? String }
+    var contentType: String { (allHeaderFields["Content-Type"] as? String) ?? ContentType.data.value }
 
 }

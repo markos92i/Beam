@@ -3,7 +3,6 @@
 //  NetworkActor
 //
 //  Created by Marcos del Castillo Camacho on 13/3/25.
-//  Copyright © 2025 SNGULAR. All rights reserved.
 //
 
 import Foundation

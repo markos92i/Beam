@@ -3,7 +3,6 @@
 //  Randstad Empleo
 //
 //  Created by Marcos del Castillo Camacho on 12/3/25.
-//  Copyright © 2025 SNGULAR. All rights reserved.
 //
 
 import Foundation
@@ -72,7 +71,7 @@ private struct Stub {
 struct StubResponse {
     let data: Data?
     let response: URLResponse?
-    let error: NetworkErrorType?
+    let error: ServiceErrorType?
 }
 
 struct EndpointMock {

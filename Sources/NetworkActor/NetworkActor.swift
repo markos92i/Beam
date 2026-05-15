@@ -3,7 +3,6 @@
 //  NetworkActor
 //
 //  Created by Marcos del Castillo Camacho on 6/3/25.
-//  Copyright © 2025 SNGULAR. All rights reserved.
 //
 
 import SwiftUI
@@ -53,78 +52,74 @@ public actor NetworkActor: NetworkProtocol {
     deinit {
         progressContinuation.finish()
     }
-
-    // MARK: - Public API (Throwing only)
-
-    public func request(api: APIEndpoint) async throws -> Data {
-        guard let request = api.urlRequest else { throw NetworkError(type: .invalidURL) }
+    
+    private func executeOperation<T>(
+        api: APIEndpoint,
+        operation: (URLRequest) async throws -> (T, URLResponse)
+    ) async throws(NetworkError) -> (T, HTTPURLResponse) {
+        guard let request = api.urlRequest else { throw .invalidURL }
         
-        debug("request path: \(api.method): \(request.url?.absoluteString ?? "")")
+        debug("request path: [\(api.method)] \(request.url?.absoluteString ?? "")")
         if let body = request.httpBody {
             debug("request body: \(String(data: body, encoding: .utf8) ?? "")")
         }
-
+        
         do {
-            let (data, response) = try await session.data(for: request)
+            let (responseData, response) = try await operation(request)
             await NetworkActor.queue.remove(session)
             
-            debug("response body: \(prettyJson(data: data) ?? "")")
-            
-            return try validateResponse(response: response, data: data)
-        } catch {
-            throw mapError(error)
-        }
-    }
-
-    public func upload(api: APIEndpoint, data: Data) async throws -> Data {
-        guard let request = api.urlRequest else { throw NetworkError(type: .invalidURL) }
-
-        debug("upload path: \(api.method): \(request.url?.absoluteString ?? "")")
-        debug("upload data: \(String(data: data, encoding: .utf8)?.prefix(200) ?? "")...")
-
-        do {
-            let (responseData, response) = try await session.upload(for: request, from: data)
-            await NetworkActor.queue.remove(session)
-            
-            return try validateResponse(response: response, data: responseData)
-        } catch {
-            throw mapError(error)
-        }
-    }
-
-    public func download(api: APIEndpoint) async throws -> URL {
-        guard let request = api.urlRequest else { throw NetworkError(type: .invalidURL) }
-
-        debug("download path: \(api.method): \(request.url?.absoluteString ?? "")")
-
-        do {
-            let (url, response) = try await session.download(for: request)
-            await NetworkActor.queue.remove(session)
-
             guard let httpResponse = response as? HTTPURLResponse else {
-                throw NetworkError(type: .noResponse)
+                throw NetworkError.noResponse
             }
             
-            debug("download response statusCode: \(httpResponse.statusCode)")
+            debug("response statusCode: \(httpResponse.statusCode)")
             
-            switch httpResponse.statusCode {
-            case 200...299:
-                guard let contentType = httpResponse.contentType else {
-                    throw NetworkError(type: .unknown)
-                }
-                
-                return try save(url: url, contentType: contentType)
-                
-            case 400: throw NetworkError(type: .badRequest)
-            case 401: throw NetworkError(type: .unauthorized)
-            case 403: throw NetworkError(type: .forbidden)
-            case 404: throw NetworkError(type: .notFound)
-            case 409: throw NetworkError(type: .conflict)
-            case 500...599: throw NetworkError(type: .serverError)
-            default:  throw NetworkError(type: .unexpectedCode)
-            }
+            return (responseData, httpResponse)
+        } catch let error as URLError {
+            await NetworkActor.queue.remove(session)
+            throw .url(error, code: error.code)
+        } catch let error as NetworkError {
+            await NetworkActor.queue.remove(session)
+            throw error
         } catch {
-            throw mapError(error)
+            await NetworkActor.queue.remove(session)
+            throw .unknown
+        }
+    }
+    
+    // MARK: - Public API
+    public func request(api: APIEndpoint) async throws(NetworkError) -> Data {
+        let (data, response) = try await executeOperation(api: api) { request in
+            try await session.data(for: request)
+        }
+        
+        debug("response body: \(prettyJson(data: data) ?? "")")
+        guard (200...299).contains(response.statusCode) else { throw .http(code: response.statusCode, data: data) }
+        
+        return data
+    }
+    
+    public func upload(api: APIEndpoint, data: Data) async throws(NetworkError) -> Data {
+        let (responseData, response) = try await executeOperation(api: api) { request in
+            try await session.upload(for: request, from: data)
+        }
+        
+        guard (200...299).contains(response.statusCode) else { throw .http(code: response.statusCode, data: responseData) }
+
+        return responseData
+    }
+    
+    public func download(api: APIEndpoint) async throws(NetworkError) -> URL {
+        let (url, response) = try await executeOperation(api: api) { request in
+            try await session.download(for: request)
+        }
+        
+        guard (200...299).contains(response.statusCode) else { throw .http(code: response.statusCode, data: nil) }
+        
+        do {
+            return try FileUtils.copy(url: url, to: .cachesDirectory, contentType: response.contentType)
+        } catch {
+            throw NetworkError(fileError: error)
         }
     }
 
@@ -133,81 +128,10 @@ public actor NetworkActor: NetworkProtocol {
     }
 
     // MARK: - Private Helpers
-    
-    private func validateResponse(response: URLResponse, data: Data) throws -> Data {
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NetworkError(type: .noResponse)
-        }
-
-        debug("response statusCode: \(httpResponse.statusCode)")
-
-        switch httpResponse.statusCode {
-        case 200...299:
-            return data
-        case 400:
-            throw NetworkError(type: .badRequest, body: data)
-        case 401:
-            throw NetworkError(type: .unauthorized, body: data)
-        case 403:
-            throw NetworkError(type: .forbidden, body: data)
-        case 404:
-            throw NetworkError(type: .notFound, body: data)
-        case 409:
-            throw NetworkError(type: .conflict, body: data)
-        case 500...599:
-            throw NetworkError(type: .serverError, body: data)
-        default:
-            throw NetworkError(type: .unexpectedCode, body: data)
-        }
-    }
-    
-    private func mapError(_ error: Error) -> NetworkError {
-        if let networkError = error as? NetworkError {
-            return networkError
-        }
-        
-        // Errores de URLSession (Conectividad, DNS, SSL)
-        guard let urlError = error as? URLError else {
-            return .init(type: .unknown)
-        }
-        
-        switch urlError.code {
-        case .timedOut:
-            return .init(type: .timedOut)
-        case .cancelled:
-            return .init(type: .canceled)
-        case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed:
-            return .init(type: .noConnection)
-        case .secureConnectionFailed, .serverCertificateHasBadDate, .serverCertificateUntrusted:
-            return .init(type: .sslError)
-        case .cannotFindHost, .dnsLookupFailed:
-            return .init(type: .serverError)
-        default:
-            return .init(type: .unknown)
-        }
-    }
-        
     private func debug(_ text: String) {
         print("[LOG] Network ID[\(uuid)]: \(text)")
     }
-    
-    private func save(url: URL, contentType: String) throws -> URL {
-        let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-        let sub = contentType.split(separator: "/").last
-        let ext = UTType(mimeType: contentType)?.preferredFilenameExtension ?? String(sub ?? "")
         
-        guard let target = cachesDir?.appendingPathComponent("\(UUID().uuidString).\(ext)") else {
-            throw NetworkError(type: .storage)
-        }
-
-        if FileManager.default.fileExists(atPath: target.path()) {
-            try FileManager.default.removeItem(at: target)
-        }
-        
-        try FileManager.default.copyItem(at: url, to: target)
-        return target
-    }
-    
     private func prettyJson(data: Data) -> NSString? {
         guard let object = try? JSONSerialization.jsonObject(with: data, options: []),
               let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted]),
