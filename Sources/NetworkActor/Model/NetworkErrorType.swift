@@ -2,7 +2,8 @@
 //  NetworkErrorType.swift
 //  NetworkActor
 //
-//  Created by Marcos del Castillo Camacho on 23/03/2026.
+//  Created by Marcos del Castillo Camacho on 10/2/25.
+//  Copyright © 2025 SNGULAR. All rights reserved.
 //
 
 import Foundation

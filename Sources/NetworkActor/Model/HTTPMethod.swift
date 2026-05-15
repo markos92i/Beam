@@ -2,7 +2,8 @@
 //  HTTPMethod.swift
 //  NetworkActor
 //
-//  Created by Marcos del Castillo Camacho on 23/03/2026.
+//  Created by Marcos del Castillo Camacho on 5/1/25.
+//  Copyright © 2025 SNGULAR. All rights reserved.
 //
 
 import Foundation

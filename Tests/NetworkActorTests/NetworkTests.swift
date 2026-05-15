@@ -1,3 +1,10 @@
+//
+//  NetworkTests.swift
+//  Randstad Empleo
+//
+//  Created by Marcos del Castillo Camacho on 27/3/25.
+//  Copyright © 2025 SNGULAR. All rights reserved.
+//
 
 import Foundation
 import Testing
@@ -26,7 +33,7 @@ struct NetworkTests {
         let api = ServicePayload(method: .get,
                                  baseURL: "https://base-url.com",
                                  path: "/ok",
-                                 headers: ContentType.json.header)
+                                 headers: ContentType.json().header)
         let endpoint = EndpointMock(endpoint: api)
 
         let responseBody = ResponseMock(id: "my-id", value: 0)
@@ -54,7 +61,7 @@ struct NetworkTests {
         let api = ServicePayload(method: .get,
                                  baseURL: "https://base-url.com",
                                  path: "/error",
-                                 headers: ContentType.json.header)
+                                 headers: ContentType.json().header)
         let endpoint = EndpointMock(endpoint: api)
         
         URLProtocolStub.addStub(endpoint: endpoint) {

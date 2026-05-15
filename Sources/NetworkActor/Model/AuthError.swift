@@ -2,7 +2,7 @@
 //  AuthError.swift
 //  NetworkActor
 //
-//  Created by Marcos del Castillo Camacho on 23/03/2026.
+//  Created by Marcos del Castillo Camacho on 30/3/25.
 //
 
 import Foundation

@@ -2,7 +2,8 @@
 //  NetworkError.swift
 //  NetworkActor
 //
-//  Created by Marcos del Castillo Camacho on 23/03/2026.
+//  Created by Marcos del Castillo Camacho on 11/3/25.
+//  Copyright © 2025 SNGULAR. All rights reserved.
 //
 
 import Foundation
@@ -18,7 +19,7 @@ public struct NetworkError: Error {
 }
 
 extension NetworkError: CustomNSError {
-    public static var errorDomain: String { Bundle.main.bundleIdentifier ?? "es.randstad.candidate" }
+    public static var errorDomain: String { Bundle.main.bundleIdentifier ?? "network.actor" }
     
     public var errorCode: Int { type.rawValue }
     
@@ -30,5 +31,12 @@ extension NetworkError: CustomNSError {
         }
         
         return userInfo
+    }
+    
+    public var logged: Bool {
+        switch type {
+        case .canceled: false // Ignore cancelled by user
+        default: true
+        }
     }
 }

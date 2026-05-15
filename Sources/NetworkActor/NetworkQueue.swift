@@ -2,7 +2,8 @@
 //  NetworkQueue.swift
 //  NetworkActor
 //
-//  Created by Marcos del Castillo Camacho on 23/03/2026.
+//  Created by Marcos del Castillo Camacho on 19/9/24.
+//  Copyright © 2024 SNGULAR. All rights reserved.
 //
 
 import Foundation
