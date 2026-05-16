@@ -8,6 +8,8 @@
 import SwiftUI
 
 public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
+    public var id = UUID().uuidString
+    
     public var network: NetworkActor
     public var auth: (any AuthProtocol)? = nil
     public var crash: CrashProtocol? = nil

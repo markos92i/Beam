@@ -13,29 +13,36 @@ protocol NetworkProtocol: Actor {
     func upload(api: APIEndpoint, data: Data) async throws(NetworkError) -> Data
     func download(api: APIEndpoint) async throws(NetworkError) -> (url: URL, contentType: String)
     
-    var progress: Progress { get async }
+    var progress: AsyncStream<Progress> { get }
 }
 
 public actor NetworkActor: NetworkProtocol {
-    public let uuid = UUID().uuidString
+    private let id = UUID().uuidString
     
     private let logger: Logger = Logger()
     private let session: URLSession
     private let certificates: [Data]
     
-    private var continuation: CheckedContinuation<Progress, Never>?
-    public var progress: Progress { get async { await withCheckedContinuation { continuation = $0 } } }
-
-    private var tasks: [String: URLSessionTask] = [:]
+    private var currentTask: URLSessionTask?
+    private let progressContinuation: AsyncStream<Progress>.Continuation
+    public let progress: AsyncStream<Progress>
 
     public init(
-        configuration: URLSessionConfiguration = .default,
+        session: URLSession = .shared,
         certificates: [Data] = []
     ) {
-        self.session = URLSession(configuration: configuration)
+        self.session = session
         self.certificates = certificates
-    }
         
+        let (stream, continuation) = AsyncStream<Progress>.makeStream()
+        self.progress = stream
+        self.progressContinuation = continuation
+    }
+    
+    deinit {
+        progressContinuation.finish()
+    }
+
     private func execute<T>(
         api: APIEndpoint,
         operation: (URLRequest, URLSessionTaskDelegate) async throws -> (T, URLResponse)
@@ -105,18 +112,17 @@ public actor NetworkActor: NetworkProtocol {
 
 extension NetworkActor {
     public func cancel() async {
-        tasks[uuid]?.cancel()
-        tasks.removeValue(forKey: uuid)
+        currentTask?.cancel()
+        currentTask = nil
     }
 
     // MARK: Task management
     private func onTaskCreated(task: URLSessionTask) {
-        continuation?.resume(returning: task.progress)
-        
-        tasks[uuid] = task
+        currentTask = task
+        progressContinuation.yield(task.progress)
     }
     
     private func onTaskCompleted() {
-        tasks.removeValue(forKey: uuid)
+        currentTask = nil
     }
 }

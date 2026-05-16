@@ -10,11 +10,12 @@ import Testing
 @testable import NetworkActor
 
 struct NetworkTests {
-    private let mockConfig: URLSessionConfiguration = {
+    private let mockSession: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [URLProtocolStub.self]
-        return config
+        return URLSession(configuration: config)
     }()
+
     
     private let defaultEncoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -46,7 +47,7 @@ struct NetworkTests {
             return StubResponse(data: responseData, response: urlResponse, error: nil)
         }
 
-        let service = ServiceManager<ResponseMock, ServiceError<Void>>(network: .init(configuration: mockConfig), api: endpoint.api)
+        let service = ServiceManager<ResponseMock, ServiceError<Void>>(network: .init(session: mockSession), api: endpoint.api)
         
         do {
             let _: ResponseMock = try await service.request()
@@ -69,7 +70,7 @@ struct NetworkTests {
             return StubResponse(data: nil, response: urlResponse, error: nil)
         }
         
-        let service = ServiceManager<ResponseMock, ServiceError<Void>>(network: .init(configuration: mockConfig), api: endpoint.api)
+        let service = ServiceManager<ResponseMock, ServiceError<Void>>(network: .init(session: mockSession), api: endpoint.api)
 
         do {
             let _: ResponseMock = try await service.request()
@@ -99,10 +100,6 @@ struct NetworkTests {
 
         do {
             let service = TestService()
-            Task {
-                print("progress: \(await service.progress) ")
-            }
-
             let _: ResponseOnlineMock = try await service.request()
             #expect(true)
         } catch {
