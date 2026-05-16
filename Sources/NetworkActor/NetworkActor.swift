@@ -59,13 +59,13 @@ public actor NetworkActor: NetworkProtocol {
                 throw NetworkError.noResponse
             }
             
-            guard (200...299).contains(httpResponse.statusCode) else { throw NetworkError.http(code: httpResponse.statusCode, data: value as? Data) }
+            guard (200...299).contains(httpResponse.statusCode) else {
+                throw NetworkError.http(code: httpResponse.statusCode, data: value as? Data)
+            }
 
             logger.debug("[\(request.httpMethod ?? "")] \(request.url?.absoluteString ?? "")")
             logger.debug("[RESPONSE]: \(httpResponse.statusCode)")
-            if let value = value as? Data {
-                logger.debug("[RESPONSE]:\n\(JSONHelper.prettyString(from: value) ?? "")")
-            }
+            logger.debug("[RESPONSE]:\n\(JSONHelper.prettyString(from: (value as? Data) ?? Data()) ?? "")")
 
             return (value, httpResponse)
         } catch let error as URLError {

@@ -13,8 +13,7 @@ public protocol ServiceProtocol: Identifiable, Sendable {
     
     var id: String { get }
     var service: ServiceManager<Success, Failure> { get }
-    var progress: AsyncStream<Progress> { get }
-    var progressAsync: Progress { get async }
+    var progress: Progress { get async }
     
     func request() async throws(ServiceError<Failure>) -> Success
     func request() async -> Result<Success, ServiceError<Failure>>
@@ -23,7 +22,7 @@ public protocol ServiceProtocol: Identifiable, Sendable {
 
 extension ServiceProtocol {
     public var id: String { service.network.uuid }
-    public var progress: Progress { get async { await service.network.current } }
+    public var progress: Progress { get async { await service.network.progress } }
     
     public func request() async throws(ServiceError<Failure>) -> Success {
         try await service.request()

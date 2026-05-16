@@ -100,7 +100,7 @@ struct NetworkTests {
         do {
             let service = TestService()
             Task {
-                print("progress ASYNC: \(await service.progressAsync) ")
+                print("progress: \(await service.progress) ")
             }
 
             let _: ResponseOnlineMock = try await service.request()
