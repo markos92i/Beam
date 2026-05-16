@@ -145,9 +145,12 @@ extension ServiceError {
     }
     
     init(from authError: AuthError) {
-        // Asumiendo que AuthError tiene casos relevantes
-        // Por simplificar, mapeamos a .unauthorized, pero podrías hacer más granular
-        self = .unauthorized(nil)
+        switch authError {
+        case .missingToken, .invalidCredentials, .failedToRefreshToken:
+            self = .unauthorized(nil)
+        case .unknown:
+            self = .unknown
+        }
     }
     
     init(from fileError: FileError) {

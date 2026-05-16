@@ -33,9 +33,9 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
     }
     
     // MARK: - Throwing Core Implementation
-    @concurrent private func performOperation(
-        operation: (APIEndpoint) async throws -> Success
-    ) async throws(ServiceError<Failure>) -> Success {
+    @concurrent private func perform<Output>(
+        operation: (APIEndpoint) async throws -> Output
+    ) async throws(ServiceError<Failure>) -> Output {
         for attempt in 0...config.maxRetries {
             do {
                 let api = try await prepare(payload: self.api)
@@ -56,7 +56,7 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
     }
     
     @concurrent public func request() async throws(ServiceError<Failure>) -> Success {
-        try await performOperation() { api in
+        try await perform() { api in
             let data: Data = try await network.request(api: api)
             guard let decoded: Success = try serializer.decode(data: data) else {
                 throw ServiceError<Failure>.decode
@@ -66,7 +66,7 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
     }
     
     @concurrent public func upload() async throws(ServiceError<Failure>) -> Success {
-        try await performOperation() { api in
+        try await perform() { api in
             let data: Data = try await network.upload(api: api, data: api.data ?? Data())
             guard let decoded: Success = try serializer.decode(data: data) else {
                 throw ServiceError<Failure>.decode
@@ -75,6 +75,12 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
         }
     }
     
+    @concurrent public func stream() async throws(ServiceError<Failure>) -> AsyncThrowingStream<String, ServiceError<Failure>> {
+        try await perform() { api in
+            try await network.stream(api: api)
+        }.mapError { mapError($0) }
+    }
+
     @concurrent public func file(file: String) async throws(ServiceError<Failure>) -> Success {
         do {
             guard let url = Bundle.main.url(forResource: file, withExtension: nil) else {
@@ -130,8 +136,12 @@ extension ServiceManager {
         var extraInfo: [String: Any] = [:]
         
         switch error {
+        case let serviceErr as ServiceError<Failure>:
+            serviceError = serviceErr
         case let networkErr as NetworkError:
             serviceError = ServiceError(from: networkErr, serializer: serializer)
+        case let urlError as URLError:
+            serviceError = ServiceError(from: NetworkError.url(urlError), serializer: serializer)
         case let authErr as AuthError:
             serviceError = ServiceError(from: authErr)
         case let fileErr as FileError:
@@ -155,6 +165,27 @@ extension ServiceManager {
         ].merging(info) { $1 }
         
         crash?.report(error: error, userInfo: requestContext)
+    }
+}
+
+private extension AsyncThrowingStream where Failure == Error {
+    func mapError<NewFailure: Error>(_ transform: @Sendable @escaping (Error) -> NewFailure) -> AsyncThrowingStream<Element, NewFailure> {
+        AsyncThrowingStream<Element, NewFailure> { continuation in
+            let task = Task {
+                do {
+                    for try await element in self {
+                        continuation.yield(element)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: transform(error))
+                }
+            }
+            
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
+        }
     }
 }
 

@@ -13,6 +13,7 @@ protocol NetworkProtocol: Actor {
     func request(api: APIEndpoint) async throws -> Data
     func upload(api: APIEndpoint, data: Data) async throws -> Data
     func download(api: APIEndpoint) async throws -> URL
+    func stream(api: APIEndpoint) async throws -> AsyncThrowingStream<String, Error>
     
     var progress: AsyncStream<Progress> { get }
 }
@@ -127,7 +128,32 @@ public actor NetworkActor: NetworkProtocol {
             throw NetworkError(fileError: error)
         }
     }
-
+    
+    public func stream(api: APIEndpoint) async throws(NetworkError) -> AsyncThrowingStream<String, Error> {
+        let (bytes, response) = try await executeOperation(api: api) { request in
+            try await session.bytes(for: request)
+        }
+        
+        guard (200...299).contains(response.statusCode) else { throw .http(code: response.statusCode, data: nil) }
+        
+        return AsyncThrowingStream<String, Error> { (continuation: AsyncThrowingStream<String, Error>.Continuation) in
+            let streamTask = Task {
+                do {
+                    for try await line in bytes.lines {
+                        continuation.yield(line)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            
+            continuation.onTermination = { @Sendable _ in
+                streamTask.cancel()
+            }
+        }
+    }
+    
     public func cancel() async {
         await NetworkActor.queue.cancel(session)
     }
