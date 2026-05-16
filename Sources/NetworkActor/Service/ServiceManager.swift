@@ -126,74 +126,25 @@ extension ServiceManager where Success == URL {
 // MARK: Error management and reporting
 extension ServiceManager {
     private func mapError(_ error: Error) -> ServiceError<Failure> {
-        if let serviceError = error as? ServiceError<Failure> { return serviceError }
-        
-        var abstractError: ServiceError<Failure>
+        let serviceError: ServiceError<Failure>
         var extraInfo: [String: Any] = [:]
         
         switch error {
-        case is AuthError:
-            abstractError = .unauthorized(nil)
-        case let fileError as FileError:
-            switch fileError {
-            case .invalidTargetURL:
-                abstractError = .storage
-            case .removeFailed(_):
-                abstractError = .storage
-            case .copyFailed(_):
-                abstractError = .storage
-            }
-
-        case let serializerError as SerializerError:
-            switch serializerError {
-            case .encoding(_, let info):
-                abstractError = .encode
-                extraInfo = info
-            case .decoding(_, let info):
-                abstractError = .encode
-                extraInfo = info
-            }
-            
-        case let networkError as NetworkError:
-            var decodedErrorBody: Failure? = nil
-            
-            switch networkError {
-            case .http(let statusCode, let data):
-                if let data, !data.isEmpty {
-                    decodedErrorBody = try? serializer.decode(data: data)
-                }
-                
-                switch statusCode {
-                case 400: abstractError = .badRequest(decodedErrorBody)
-                case 401: abstractError = .unauthorized(decodedErrorBody)
-                case 403: abstractError = .forbidden(decodedErrorBody)
-                case 404: abstractError = .notFound(decodedErrorBody)
-                case 409: abstractError = .conflict(decodedErrorBody)
-                case 500...599: abstractError = .serverError(decodedErrorBody)
-                default: abstractError = .unexpectedCode(statusCode: statusCode, body: decodedErrorBody)
-                }
-                
-            case .url(_, let code):
-                switch code {
-                case .timedOut: abstractError = .timedOut
-                case .cancelled: abstractError = .canceled
-                case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed: abstractError = .noConnection
-                case .secureConnectionFailed, .serverCertificateHasBadDate, .serverCertificateUntrusted: abstractError = .sslError
-                case .cannotFindHost, .dnsLookupFailed: abstractError = .serverUnreachable
-                default: abstractError = .unknown
-                }
-                
-            case .noResponse:   abstractError = .noResponse
-            case .invalidURL:   abstractError = .invalidURL
-            default:            abstractError = .unknown
-            }
+        case let networkErr as NetworkError:
+            serviceError = ServiceError(from: networkErr, serializer: serializer)
+        case let authErr as AuthError:
+            serviceError = ServiceError(from: authErr)
+        case let fileErr as FileError:
+            serviceError = ServiceError(from: fileErr)
+        case let serializerErr as SerializerError:
+            serviceError = ServiceError(from: serializerErr)
+            // extraInfo = serializerErr.userInfo
         default:
-            abstractError = ServiceError<Failure>.unknown
+            serviceError = .unknown
         }
         
-        reportFailure(error: error, serviceError: abstractError, info: extraInfo)
-        
-        return abstractError
+        reportFailure(error: error, serviceError: serviceError, info: extraInfo)
+        return serviceError
     }
     
     private func reportFailure(error: Error, serviceError: ServiceError<Failure>, info: [String: Any]) {

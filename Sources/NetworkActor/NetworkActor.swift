@@ -18,16 +18,18 @@ protocol NetworkProtocol: Actor {
 }
 
 public actor NetworkActor: NetworkProtocol {
-    let uuid = UUID().uuidString
+    public let uuid = UUID().uuidString
     
-    public static let queue = NetworkQueue()
-    
+    private let logger: Logger = Logger()
+
     private let delegate: NetworkDelegate
     private let session: URLSession
     
     private let progressContinuation: AsyncStream<Progress>.Continuation
-    let progress: AsyncStream<Progress>
+    internal let progress: AsyncStream<Progress>
     
+    public static let queue = NetworkQueue()
+
     public static let config: URLSessionConfiguration = {
         let config = URLSessionConfiguration.default
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
@@ -59,9 +61,9 @@ public actor NetworkActor: NetworkProtocol {
     ) async throws(NetworkError) -> (T, HTTPURLResponse) {
         guard let request = api.urlRequest else { throw .invalidURL }
         
-        debug("request path: [\(api.method)] \(request.url?.absoluteString ?? "")")
+        logger.debug("request path: [\(api.method)] \(request.url?.absoluteString ?? "")")
         if let body = request.httpBody {
-            debug("request body: \(String(data: body, encoding: .utf8) ?? "")")
+            logger.debug("request body: \(String(data: body, encoding: .utf8) ?? "")")
         }
         
         do {
@@ -72,18 +74,21 @@ public actor NetworkActor: NetworkProtocol {
                 throw NetworkError.noResponse
             }
             
-            debug("response statusCode: \(httpResponse.statusCode)")
+            logger.debug("response statusCode: \(httpResponse.statusCode)")
             
             return (responseData, httpResponse)
         } catch let error as URLError {
+            logger.error("URLError: \(error.code.rawValue) - \(error.localizedDescription)")
             await NetworkActor.queue.remove(session)
-            throw .url(error, code: error.code)
+            throw .url(error)
         } catch let error as NetworkError {
+            logger.error("NetworkError: \(error.statusCode) - \(error.localizedDescription)")
             await NetworkActor.queue.remove(session)
             throw error
         } catch {
+            logger.error("UnknownError: \(error.localizedDescription)")
             await NetworkActor.queue.remove(session)
-            throw .unknown
+            throw NetworkError.unknown(error)
         }
     }
     
@@ -93,7 +98,7 @@ public actor NetworkActor: NetworkProtocol {
             try await session.data(for: request)
         }
         
-        debug("response body: \(prettyJson(data: data) ?? "")")
+        logger.debug("response body: \(JSONHelper.prettyString(from: data) ?? "")")
         guard (200...299).contains(response.statusCode) else { throw .http(code: response.statusCode, data: data) }
         
         return data
@@ -126,19 +131,9 @@ public actor NetworkActor: NetworkProtocol {
     public func cancel() async {
         await NetworkActor.queue.cancel(session)
     }
-
-    // MARK: - Private Helpers
-    private func debug(_ text: String) {
-        print("[LOG] Network ID[\(uuid)]: \(text)")
-    }
-        
-    private func prettyJson(data: Data) -> NSString? {
-        guard let object = try? JSONSerialization.jsonObject(with: data, options: []),
-              let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted]),
-              let prettyPrintedString = NSString(data: data, encoding: String.Encoding.utf8.rawValue) else {
-            return NSString(data: data, encoding: String.Encoding.utf8.rawValue)
-        }
-
-        return prettyPrintedString
+    
+    private func handleAndThrow(_ error: NetworkError, function: String = #function) async throws -> Never {
+        logger.error("[\(function)] \(error.description ?? error.localizedDescription)")
+        throw error
     }
 }

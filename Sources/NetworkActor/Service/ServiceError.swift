@@ -7,7 +7,7 @@
 
 import Foundation
 
-public enum ServiceError<Value: Sendable>: Error, Identifiable, CustomStringConvertible {
+public enum ServiceError<Failure: Sendable>: Error, Identifiable, CustomStringConvertible {
     case encode
     case decode
     case storage
@@ -23,18 +23,17 @@ public enum ServiceError<Value: Sendable>: Error, Identifiable, CustomStringConv
     case unknown
 
     // Errores HTTP con valor asociado genérico (el Dto de error del backend)
-    case badRequest(Value?)
-    case unauthorized(Value?)
-    case forbidden(Value?)
-    case notFound(Value?)
-    case conflict(Value?)
-    case serverError(Value?)
+    case badRequest(Failure?)
+    case unauthorized(Failure?)
+    case forbidden(Failure?)
+    case notFound(Failure?)
+    case conflict(Failure?)
+    case serverError(Failure?)
     
-    case unexpectedCode(statusCode: Int, body: Value?)
+    case unexpectedCode(statusCode: Int, body: Failure?)
 
     // MARK: - Identifiable Compliance
-    /// Sustituye al antiguo 'Int' del enum. Mantiene los mismos códigos estáticos de tu arquitectura.
-    public var code: Int {
+    public var id: Int {
         switch self {
         case .encode: 0
         case .decode: 1
@@ -60,8 +59,6 @@ public enum ServiceError<Value: Sendable>: Error, Identifiable, CustomStringConv
         case .unexpectedCode(let statusCode, _): statusCode
         }
     }
-
-    public var id: Int { code }
 
     public var title: String {
         switch self {
@@ -118,21 +115,72 @@ public enum ServiceError<Value: Sendable>: Error, Identifiable, CustomStringConv
     }
 }
 
+extension ServiceError {
+    init(from networkError: NetworkError, serializer: Serializer) {
+        switch networkError {
+        case .http(let statusCode, let data):
+            let decodedBody: Failure? = data.flatMap { try? serializer.decode(data: $0) }
+            switch statusCode {
+            case 400: self = .badRequest(decodedBody)
+            case 401: self = .unauthorized(decodedBody)
+            case 403: self = .forbidden(decodedBody)
+            case 404: self = .notFound(decodedBody)
+            case 409: self = .conflict(decodedBody)
+            case 500...599: self = .serverError(decodedBody)
+            default: self = .unexpectedCode(statusCode: statusCode, body: decodedBody)
+            }
+        case .url(let urlError):
+            switch urlError.code {
+            case .timedOut: self = .timedOut
+            case .cancelled: self = .canceled
+            case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed: self = .noConnection
+            case .secureConnectionFailed, .serverCertificateHasBadDate, .serverCertificateUntrusted: self = .sslError
+            case .cannotFindHost, .dnsLookupFailed: self = .serverUnreachable
+            default: self = .unknown
+            }
+        case .noResponse: self = .noResponse
+        case .invalidURL: self = .invalidURL
+        default: self = .unknown
+        }
+    }
+    
+    init(from authError: AuthError) {
+        // Asumiendo que AuthError tiene casos relevantes
+        // Por simplificar, mapeamos a .unauthorized, pero podrías hacer más granular
+        self = .unauthorized(nil)
+    }
+    
+    init(from fileError: FileError) {
+        switch fileError {
+        case .invalidTargetURL, .removeFailed, .copyFailed:
+            self = .storage
+        }
+    }
+    
+    init(from serializerError: SerializerError) {
+        switch serializerError {
+        case .encoding: self = .encode
+        case .decoding: self = .decode
+        }
+        
+    }
+}
+
 // MARK: - Equatable Compliance
 extension ServiceError: Equatable {
-    public static func == (lhs: ServiceError<Value>, rhs: ServiceError<Value>) -> Bool {
-        lhs.code == rhs.code
+    public static func == (lhs: ServiceError<Failure>, rhs: ServiceError<Failure>) -> Bool {
+        lhs.id == rhs.id
     }
 }
 
 extension ServiceError: CustomNSError {
     public static var errorDomain: String { Bundle.main.bundleIdentifier ?? "network.actor" }
     
-    public var errorCode: Int { code }
+    public var errorCode: Int { id }
     
     public var errorUserInfo: [String: Any] {
         [
-            NSLocalizedDescriptionKey: "\(code): \(title)",
+            NSLocalizedDescriptionKey: "\(id): \(title)",
             NSLocalizedFailureReasonErrorKey: description
         ]
     }
