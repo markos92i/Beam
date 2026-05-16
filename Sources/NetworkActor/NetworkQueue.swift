@@ -8,26 +8,23 @@
 import Foundation
 
 public actor NetworkQueue {
-    private var queue: [URLSession] = []
+    private var tasks: [String: URLSessionTask] = [:]
     
-    public func append(_ session: URLSession) async {
-        queue.append(session)
-    }
-    
-    public func contains(_ session: URLSession) async -> Bool {
-        queue.contains(session)
+    public func append(id: String, task: URLSessionTask) {
+        tasks[id] = task
     }
     
-    public func remove(_ session: URLSession) async {
-        queue.removeAll { $0 == session }
+    public func remove(id: String) {
+        tasks.removeValue(forKey: id)
     }
-
-    public func cancel(_ session: URLSession) async {
-        session.invalidateAndCancel()
-        await remove(session)
+    
+    public func cancel(id: String) {
+        tasks[id]?.cancel()
+        tasks.removeValue(forKey: id)
     }
-
-    public func cancelAll() async {
-        for session in queue { await cancel(session) }
+    
+    public func cancelAll() {
+        tasks.values.forEach { $0.cancel() }
+        tasks.removeAll()
     }
 }

@@ -75,11 +75,13 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
         }
     }
     
+    /*
     @concurrent public func stream() async throws(ServiceError<Failure>) -> AsyncThrowingStream<String, ServiceError<Failure>> {
         try await perform() { api in
             try await network.stream(api: api)
-        }.mapError { mapError($0) }
+        }
     }
+     */
 
     @concurrent public func file(file: String) async throws(ServiceError<Failure>) -> Success {
         do {
@@ -123,8 +125,9 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
 
 extension ServiceManager where Success == URL {
     @concurrent public func download() async throws(ServiceError<Failure>) -> URL {
-        try await performOperation() { api in
-            try await network.download(api: api)
+        try await perform() { api in
+            let result = try await network.download(api: api)
+            return try FileUtils.copy(url: result.url, to: .cachesDirectory, contentType: result.contentType)
         }
     }
 }
@@ -167,25 +170,3 @@ extension ServiceManager {
         crash?.report(error: error, userInfo: requestContext)
     }
 }
-
-private extension AsyncThrowingStream where Failure == Error {
-    func mapError<NewFailure: Error>(_ transform: @Sendable @escaping (Error) -> NewFailure) -> AsyncThrowingStream<Element, NewFailure> {
-        AsyncThrowingStream<Element, NewFailure> { continuation in
-            let task = Task {
-                do {
-                    for try await element in self {
-                        continuation.yield(element)
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: transform(error))
-                }
-            }
-            
-            continuation.onTermination = { @Sendable _ in
-                task.cancel()
-            }
-        }
-    }
-}
-

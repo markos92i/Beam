@@ -44,6 +44,15 @@ public enum SerializerError: Error {
     }
 }
 
+extension SerializerError {
+    var info: [String: any Sendable] {
+        switch self {
+        case .encoding(_, info: let info): info
+        case .decoding(_, info: let info): info
+        }
+    }
+}
+
 private extension DecodingError.Context {
     var formattedPath: String {
         codingPath.compactMap { $0.stringValue }.joined(separator: ".")

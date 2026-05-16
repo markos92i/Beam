@@ -9,23 +9,17 @@ import Foundation
 
 final class NetworkDelegate: NSObject, URLSessionTaskDelegate {
     private let certificates: [Data]
-    private let continuation: AsyncStream<Progress>.Continuation
-
-    init(certificates: [Data], continuation: AsyncStream<Progress>.Continuation) {
-        self.certificates = certificates
-        self.continuation = continuation
-    }
-
-    // MARK: - URLSessionTaskDelegate
-    func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
-        Task {
-            await NetworkActor.queue.append(session)
-            continuation.yield(task.progress)
-        }
-    }
+    private let onTaskCreated: (@Sendable (URLSessionTask) -> Void)?
     
-    // MARK: - URLAuthenticationChallenge
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
+    init(
+        certificates: [Data],
+        onTaskCreated: @escaping (@Sendable (URLSessionTask) -> Void),
+    ) {
+        self.certificates = certificates
+        self.onTaskCreated = onTaskCreated
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
         guard let trust = challenge.protectionSpace.serverTrust, SecTrustGetCertificateCount(trust) > 0 else {
             return (.cancelAuthenticationChallenge, nil)
         }
@@ -40,5 +34,9 @@ final class NetworkDelegate: NSObject, URLSessionTaskDelegate {
         }
         
         return (.useCredential, URLCredential(trust: trust))
-    }    
+    }
+
+    func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
+        onTaskCreated?(task)
+    }
 }

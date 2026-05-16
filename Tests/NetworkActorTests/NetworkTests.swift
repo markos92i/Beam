@@ -49,7 +49,7 @@ struct NetworkTests {
         let service = ServiceManager<ResponseMock, ServiceError<Void>>(network: .init(configuration: mockConfig), api: endpoint.api)
         
         do {
-            let result: ResponseMock = try await service.request()
+            let _: ResponseMock = try await service.request()
             #expect(true)
         } catch {
             #expect(Bool(false))
@@ -72,10 +72,10 @@ struct NetworkTests {
         let service = ServiceManager<ResponseMock, ServiceError<Void>>(network: .init(configuration: mockConfig), api: endpoint.api)
 
         do {
-            let result: ResponseMock = try await service.request()
-            #expect(true)
-        } catch {
+            let _: ResponseMock = try await service.request()
             #expect(Bool(false))
+        } catch {
+            #expect(true)
         }
     }
 }

@@ -15,7 +15,7 @@ public enum ServiceError<Failure: Sendable>: Error, Identifiable, CustomStringCo
     case invalidFormat
     case noResponse
     
-    case canceled
+    case cancelled
     case timedOut
     case noConnection
     case serverUnreachable
@@ -42,7 +42,7 @@ public enum ServiceError<Failure: Sendable>: Error, Identifiable, CustomStringCo
         case .invalidFormat: 4
         case .noResponse: 5
         
-        case .canceled: 8
+        case .cancelled: 8
         case .timedOut: 9
         case .noConnection: 10
         case .serverUnreachable: 11
@@ -69,7 +69,7 @@ public enum ServiceError<Failure: Sendable>: Error, Identifiable, CustomStringCo
         case .invalidFormat:    "Formato incorrecto"
         case .noResponse:       "Sin respuesta"
 
-        case .canceled:         "Operación cancelada"
+        case .cancelled:         "Operación cancelada"
         case .timedOut:         "Demasiado tiempo sin respuesta"
         case .noConnection:     "Sin internet"
         case .serverUnreachable:"Servidor no alcanzable"
@@ -96,7 +96,7 @@ public enum ServiceError<Failure: Sendable>: Error, Identifiable, CustomStringCo
         case .invalidFormat:    "El contenido de respuesta tiene un formato incorrecto"
         case .noResponse:       "No se ha recibido ninguna respuesta"
             
-        case .canceled:         "La operación se ha cancelado antes de terminar"
+        case .cancelled:         "La operación se ha cancelado antes de terminar"
         case .timedOut:         "Se ha superado el tiempo limite de espera sin obtener respuesta"
         case .noConnection:     "No hay conexión a internet, comprueba la red wifi o telefónica"
         case .serverUnreachable:"No se ha podido llegar al servidor, algun punto intermedio ha fallado"
@@ -132,7 +132,7 @@ extension ServiceError {
         case .url(let urlError):
             switch urlError.code {
             case .timedOut: self = .timedOut
-            case .cancelled: self = .canceled
+            case .cancelled: self = .cancelled
             case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed: self = .noConnection
             case .secureConnectionFailed, .serverCertificateHasBadDate, .serverCertificateUntrusted: self = .sslError
             case .cannotFindHost, .dnsLookupFailed: self = .serverUnreachable

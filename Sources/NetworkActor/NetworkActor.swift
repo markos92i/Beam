@@ -6,14 +6,12 @@
 //
 
 import SwiftUI
-import UniformTypeIdentifiers
 
 // MARK: - Protocol Definition
 protocol NetworkProtocol: Actor {
-    func request(api: APIEndpoint) async throws -> Data
-    func upload(api: APIEndpoint, data: Data) async throws -> Data
-    func download(api: APIEndpoint) async throws -> URL
-    func stream(api: APIEndpoint) async throws -> AsyncThrowingStream<String, Error>
+    func request(api: APIEndpoint) async throws(NetworkError) -> Data
+    func upload(api: APIEndpoint, data: Data) async throws(NetworkError) -> Data
+    func download(api: APIEndpoint) async throws(NetworkError) -> (url: URL, contentType: String)
     
     var progress: AsyncStream<Progress> { get }
 }
@@ -22,55 +20,49 @@ public actor NetworkActor: NetworkProtocol {
     public let uuid = UUID().uuidString
     
     private let logger: Logger = Logger()
-
-    private let delegate: NetworkDelegate
     private let session: URLSession
+    private let certificates: [Data]
     
     private let progressContinuation: AsyncStream<Progress>.Continuation
     internal let progress: AsyncStream<Progress>
     
     public static let queue = NetworkQueue()
 
-    public static let config: URLSessionConfiguration = {
-        let config = URLSessionConfiguration.default
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        config.timeoutIntervalForRequest = 60
-        config.timeoutIntervalForResource = 300
-        config.urlCache = nil
-        return config
-    }()
-
     public init(
-        configuration: URLSessionConfiguration = config,
+        configuration: URLSessionConfiguration = .default,
         certificates: [Data] = []
     ) {
+        self.session = URLSession(configuration: configuration)
+        self.certificates = certificates
+        
         let (stream, continuation) = AsyncStream<Progress>.makeStream()
         self.progress = stream
         self.progressContinuation = continuation
-
-        self.delegate = .init(certificates: certificates, continuation: continuation)
-        self.session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
     }
     
     deinit {
         progressContinuation.finish()
     }
     
-    private func executeOperation<T>(
+    private func execute<T>(
         api: APIEndpoint,
-        operation: (URLRequest) async throws -> (T, URLResponse)
+        operation: (URLRequest, URLSessionTaskDelegate) async throws -> (T, URLResponse)
     ) async throws(NetworkError) -> (T, HTTPURLResponse) {
         guard let request = api.urlRequest else { throw .invalidURL }
         
-        logger.debug("request path: [\(api.method)] \(request.url?.absoluteString ?? "")")
+        logger.debug("request path: [\(request.httpMethod ?? "")] \(request.url?.absoluteString ?? "")")
         if let body = request.httpBody {
             logger.debug("request body: \(String(data: body, encoding: .utf8) ?? "")")
         }
         
         do {
-            let (responseData, response) = try await operation(request)
-            await NetworkActor.queue.remove(session)
+            defer { onTaskCompleted() }
+            let delegate = NetworkDelegate(certificates: certificates) { [weak self] task in
+                Task { [weak self] in await self?.onTaskCreated(task: task) }
+            }
             
+            let (responseData, response) = try await operation(request, delegate)
+
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw NetworkError.noResponse
             }
@@ -80,23 +72,20 @@ public actor NetworkActor: NetworkProtocol {
             return (responseData, httpResponse)
         } catch let error as URLError {
             logger.error("URLError: \(error.code.rawValue) - \(error.localizedDescription)")
-            await NetworkActor.queue.remove(session)
             throw .url(error)
         } catch let error as NetworkError {
             logger.error("NetworkError: \(error.statusCode) - \(error.localizedDescription)")
-            await NetworkActor.queue.remove(session)
             throw error
         } catch {
             logger.error("UnknownError: \(error.localizedDescription)")
-            await NetworkActor.queue.remove(session)
             throw NetworkError.unknown(error)
         }
     }
     
     // MARK: - Public API
     public func request(api: APIEndpoint) async throws(NetworkError) -> Data {
-        let (data, response) = try await executeOperation(api: api) { request in
-            try await session.data(for: request)
+        let (data, response) = try await execute(api: api) { request, delegate in
+            return try await session.data(for: request, delegate: delegate)
         }
         
         logger.debug("response body: \(JSONHelper.prettyString(from: data) ?? "")")
@@ -106,8 +95,8 @@ public actor NetworkActor: NetworkProtocol {
     }
     
     public func upload(api: APIEndpoint, data: Data) async throws(NetworkError) -> Data {
-        let (responseData, response) = try await executeOperation(api: api) { request in
-            try await session.upload(for: request, from: data)
+        let (responseData, response) = try await execute(api: api) { request, delegate in
+            try await session.upload(for: request, from: data, delegate: delegate)
         }
         
         guard (200...299).contains(response.statusCode) else { throw .http(code: response.statusCode, data: responseData) }
@@ -115,51 +104,34 @@ public actor NetworkActor: NetworkProtocol {
         return responseData
     }
     
-    public func download(api: APIEndpoint) async throws(NetworkError) -> URL {
-        let (url, response) = try await executeOperation(api: api) { request in
-            try await session.download(for: request)
+    public func download(api: APIEndpoint) async throws(NetworkError) -> (url: URL, contentType: String) {
+        let (url, response) = try await execute(api: api) { request, delegate in
+            try await session.download(for: request, delegate: delegate)
         }
         
         guard (200...299).contains(response.statusCode) else { throw .http(code: response.statusCode, data: nil) }
         
-        do {
-            return try FileUtils.copy(url: url, to: .cachesDirectory, contentType: response.contentType)
-        } catch {
-            throw NetworkError(fileError: error)
-        }
+        return (url, response.contentType)
     }
-    
-    public func stream(api: APIEndpoint) async throws(NetworkError) -> AsyncThrowingStream<String, Error> {
-        let (bytes, response) = try await executeOperation(api: api) { request in
-            try await session.bytes(for: request)
-        }
         
-        guard (200...299).contains(response.statusCode) else { throw .http(code: response.statusCode, data: nil) }
-        
-        return AsyncThrowingStream<String, Error> { (continuation: AsyncThrowingStream<String, Error>.Continuation) in
-            let streamTask = Task {
-                do {
-                    for try await line in bytes.lines {
-                        continuation.yield(line)
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            
-            continuation.onTermination = { @Sendable _ in
-                streamTask.cancel()
-            }
-        }
-    }
-    
     public func cancel() async {
-        await NetworkActor.queue.cancel(session)
+        await NetworkActor.queue.cancel(id: uuid)
     }
     
     private func handleAndThrow(_ error: NetworkError, function: String = #function) async throws -> Never {
         logger.error("[\(function)] \(error.description ?? error.localizedDescription)")
         throw error
     }
+    
+    // MARK: Task management
+    func onTaskCreated(task: URLSessionTask) {
+        self.progressContinuation.yield(task.progress)
+        
+        Task { await NetworkActor.queue.append(id: uuid, task: task) }
+    }
+    
+    func onTaskCompleted() {
+        Task { await NetworkActor.queue.remove(id: uuid) }
+    }
+
 }
