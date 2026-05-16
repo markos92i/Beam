@@ -16,33 +16,20 @@ public enum LogLevel: Int, Sendable {
     
     var prefix: String {
         switch self {
-        case .debug:   "🔍 DEBUG"
-        case .info:    "ℹ️ INFO"
-        case .warning: "⚠️ WARNING"
-        case .error:   "❌ ERROR"
+        case .debug:   "⚪️ DEBUG"
+        case .info:    "🔵 INFO"
+        case .warning: "🟠 WARNING"
+        case .error:   "🔴 ERROR"
         }
     }
-    
-    var ansiColor: String {
-        switch self {
-        case .debug:   "\u{001B}[0;34m" // Azul
-        case .info:    "\u{001B}[0;32m" // Verde
-        case .warning: "\u{001B}[0;33m" // Amarillo
-        case .error:   "\u{001B}[0;31m" // Rojo
-        }
-    }
-    
-    var ansiReset: String { "\u{001B}[0;0m" }
 }
 
 // MARK: - Logger
 struct Logger {
     private let minimumLevel: LogLevel
-    private let useColors: Bool
     
-    public init(minimumLevel: LogLevel = .debug, useColors: Bool = true) {
+    public init(minimumLevel: LogLevel = .debug) {
         self.minimumLevel = minimumLevel
-        self.useColors = useColors
     }
     
     public func log(_ message: @autoclosure () -> String,
@@ -55,11 +42,7 @@ struct Logger {
         let fileName = (file as NSString).lastPathComponent
         let formattedMessage = "[\(fileName):\(line)] \(function) - \(message())"
         
-        if useColors {
-            print("\(level.ansiColor)\(level.prefix) \(formattedMessage)\(level.ansiReset)")
-        } else {
-            print("\(level.prefix) \(formattedMessage)")
-        }
+        print("\(level.prefix) \(formattedMessage)")
     }
     
     // Métodos de conveniencia

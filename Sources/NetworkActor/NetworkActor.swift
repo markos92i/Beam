@@ -9,11 +9,11 @@ import SwiftUI
 
 // MARK: - Protocol Definition
 protocol NetworkProtocol: Actor {
-    func request(api: APIEndpoint) async throws(NetworkError) -> Data
+    func data(api: APIEndpoint) async throws(NetworkError) -> Data
     func upload(api: APIEndpoint, data: Data) async throws(NetworkError) -> Data
     func download(api: APIEndpoint) async throws(NetworkError) -> (url: URL, contentType: String)
     
-    var progress: AsyncStream<Progress> { get }
+    var progress: Progress { get async }
 }
 
 public actor NetworkActor: NetworkProtocol {
@@ -23,10 +23,10 @@ public actor NetworkActor: NetworkProtocol {
     private let session: URLSession
     private let certificates: [Data]
     
-    private let progressContinuation: AsyncStream<Progress>.Continuation
-    internal let progress: AsyncStream<Progress>
-    
-    public static let queue = NetworkQueue()
+    private var continuation: CheckedContinuation<Progress, Never>?
+    public var progress: Progress { get async { await withCheckedContinuation { continuation = $0 } } }
+
+    private var tasks: [String: URLSessionTask] = [:]
 
     public init(
         configuration: URLSessionConfiguration = .default,
@@ -34,25 +34,17 @@ public actor NetworkActor: NetworkProtocol {
     ) {
         self.session = URLSession(configuration: configuration)
         self.certificates = certificates
+    }
         
-        let (stream, continuation) = AsyncStream<Progress>.makeStream()
-        self.progress = stream
-        self.progressContinuation = continuation
-    }
-    
-    deinit {
-        progressContinuation.finish()
-    }
-    
     private func execute<T>(
         api: APIEndpoint,
         operation: (URLRequest, URLSessionTaskDelegate) async throws -> (T, URLResponse)
     ) async throws(NetworkError) -> (T, HTTPURLResponse) {
         guard let request = api.urlRequest else { throw .invalidURL }
         
-        logger.debug("request path: [\(request.httpMethod ?? "")] \(request.url?.absoluteString ?? "")")
+        logger.debug("[\(request.httpMethod ?? "")] \(request.url?.absoluteString ?? "")")
         if let body = request.httpBody {
-            logger.debug("request body: \(String(data: body, encoding: .utf8) ?? "")")
+            logger.debug("[REQUEST]: \(String(data: body, encoding: .utf8) ?? "")")
         }
         
         do {
@@ -61,15 +53,21 @@ public actor NetworkActor: NetworkProtocol {
                 Task { [weak self] in await self?.onTaskCreated(task: task) }
             }
             
-            let (responseData, response) = try await operation(request, delegate)
+            let (value, response) = try await operation(request, delegate)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw NetworkError.noResponse
             }
             
-            logger.debug("response statusCode: \(httpResponse.statusCode)")
-            
-            return (responseData, httpResponse)
+            guard (200...299).contains(httpResponse.statusCode) else { throw NetworkError.http(code: httpResponse.statusCode, data: value as? Data) }
+
+            logger.debug("[\(request.httpMethod ?? "")] \(request.url?.absoluteString ?? "")")
+            logger.debug("[RESPONSE]: \(httpResponse.statusCode)")
+            if let value = value as? Data {
+                logger.debug("[RESPONSE]:\n\(JSONHelper.prettyString(from: value) ?? "")")
+            }
+
+            return (value, httpResponse)
         } catch let error as URLError {
             logger.error("URLError: \(error.code.rawValue) - \(error.localizedDescription)")
             throw .url(error)
@@ -83,55 +81,42 @@ public actor NetworkActor: NetworkProtocol {
     }
     
     // MARK: - Public API
-    public func request(api: APIEndpoint) async throws(NetworkError) -> Data {
-        let (data, response) = try await execute(api: api) { request, delegate in
+    public func data(api: APIEndpoint) async throws(NetworkError) -> Data {
+        let (result, _) = try await execute(api: api) { request, delegate in
             return try await session.data(for: request, delegate: delegate)
         }
-        
-        logger.debug("response body: \(JSONHelper.prettyString(from: data) ?? "")")
-        guard (200...299).contains(response.statusCode) else { throw .http(code: response.statusCode, data: data) }
-        
-        return data
+        return result
     }
     
     public func upload(api: APIEndpoint, data: Data) async throws(NetworkError) -> Data {
-        let (responseData, response) = try await execute(api: api) { request, delegate in
+        let (result, _) = try await execute(api: api) { request, delegate in
             try await session.upload(for: request, from: data, delegate: delegate)
         }
-        
-        guard (200...299).contains(response.statusCode) else { throw .http(code: response.statusCode, data: responseData) }
-
-        return responseData
+        return result
     }
     
     public func download(api: APIEndpoint) async throws(NetworkError) -> (url: URL, contentType: String) {
-        let (url, response) = try await execute(api: api) { request, delegate in
+        let (result, response) = try await execute(api: api) { request, delegate in
             try await session.download(for: request, delegate: delegate)
         }
-        
-        guard (200...299).contains(response.statusCode) else { throw .http(code: response.statusCode, data: nil) }
-        
-        return (url, response.contentType)
+        return (result, response.contentType)
     }
-        
+}
+
+extension NetworkActor {
     public func cancel() async {
-        await NetworkActor.queue.cancel(id: uuid)
-    }
-    
-    private func handleAndThrow(_ error: NetworkError, function: String = #function) async throws -> Never {
-        logger.error("[\(function)] \(error.description ?? error.localizedDescription)")
-        throw error
-    }
-    
-    // MARK: Task management
-    func onTaskCreated(task: URLSessionTask) {
-        self.progressContinuation.yield(task.progress)
-        
-        Task { await NetworkActor.queue.append(id: uuid, task: task) }
-    }
-    
-    func onTaskCompleted() {
-        Task { await NetworkActor.queue.remove(id: uuid) }
+        tasks[uuid]?.cancel()
+        tasks.removeValue(forKey: uuid)
     }
 
+    // MARK: Task management
+    private func onTaskCreated(task: URLSessionTask) {
+        continuation?.resume(returning: task.progress)
+        
+        tasks[uuid] = task
+    }
+    
+    private func onTaskCompleted() {
+        tasks.removeValue(forKey: uuid)
+    }
 }

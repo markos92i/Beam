@@ -78,10 +78,50 @@ struct NetworkTests {
             #expect(true)
         }
     }
+    
+    @Test
+    func requestOnlineMock() async throws {
+        struct TestService: ServiceProtocol {
+            var service: ServiceManager<ResponseOnlineMock, Void>
+
+            init() {
+                let payload = ServicePayload(method: .get,
+                                             baseURL: "https://jsonplaceholder.typicode.com",
+                                             path: "/todos/1",
+                                             headers: ContentType.json().header)
+
+                self.service = .init(network: .init(),
+                                     auth: nil,
+                                     crash: nil,
+                                     api: payload)
+            }
+        }
+
+        do {
+            let service = TestService()
+            Task {
+                print("progress ASYNC: \(await service.progressAsync) ")
+            }
+
+            let _: ResponseOnlineMock = try await service.request()
+            #expect(true)
+        } catch {
+            #expect(Bool(false))
+        }
+    }
+    
+    
 }
 
 private struct ResponseMock: Codable, Equatable {
     let id: String
     let value: Int
+}
+
+private struct ResponseOnlineMock: Codable, Equatable {
+    let id: Int
+    let userId: Int
+    let title: String
+    let completed: Bool
 }
 

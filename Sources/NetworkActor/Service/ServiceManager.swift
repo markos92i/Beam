@@ -57,7 +57,7 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
     
     @concurrent public func request() async throws(ServiceError<Failure>) -> Success {
         try await perform() { api in
-            let data: Data = try await network.request(api: api)
+            let data: Data = try await network.data(api: api)
             guard let decoded: Success = try serializer.decode(data: data) else {
                 throw ServiceError<Failure>.decode
             }
@@ -75,14 +75,6 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
         }
     }
     
-    /*
-    @concurrent public func stream() async throws(ServiceError<Failure>) -> AsyncThrowingStream<String, ServiceError<Failure>> {
-        try await perform() { api in
-            try await network.stream(api: api)
-        }
-    }
-     */
-
     @concurrent public func file(file: String) async throws(ServiceError<Failure>) -> Success {
         do {
             guard let url = Bundle.main.url(forResource: file, withExtension: nil) else {
