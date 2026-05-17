@@ -120,6 +120,7 @@ extension NetworkActor {
     private func onTaskCreated(task: URLSessionTask) {
         currentTask = task
         progressContinuation.yield(task.progress)
+        progressContinuation.finish()
     }
     
     private func onTaskCompleted() {
