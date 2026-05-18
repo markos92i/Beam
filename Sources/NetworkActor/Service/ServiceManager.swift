@@ -10,7 +10,7 @@ import SwiftUI
 public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
     public var id = UUID().uuidString
     
-    public var network: NetworkActor
+    public var network: NetworkClient
     public var auth: (any AuthProtocol)? = nil
     public var crash: CrashProtocol? = nil
     public var api: ServicePayload
@@ -19,23 +19,23 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
     private let serializer: Serializer
     
     public init(
-        network: NetworkActor,
+        network: NetworkClient,
         auth: (any AuthProtocol)? = nil,
         crash: CrashProtocol? = nil,
         api: ServicePayload,
+        serializer: Serializer = .init(),
         config: ServiceConfig = .standard
     ) {
         self.network = network
         self.auth = auth
         self.crash = crash
+        self.serializer = serializer
         self.api = api
         self.config = config
-        
-        self.serializer = Serializer(encoder: config.encoder, decoder: config.decoder)
     }
     
     // MARK: - Throwing Core Implementation
-    @concurrent private func perform<Output>(
+    private func perform<Output>(
         operation: (APIEndpoint) async throws -> Output
     ) async throws(ServiceError<Failure>) -> Output {
         for attempt in 0...config.maxRetries {
@@ -57,7 +57,7 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
         throw ServiceError<Failure>.unknown
     }
     
-    @concurrent public func request() async throws(ServiceError<Failure>) -> Success {
+    public func request() async throws(ServiceError<Failure>) -> Success {
         try await perform() { api in
             let data: Data = try await network.data(api: api)
             guard let decoded: Success = try serializer.decode(data: data) else {
@@ -67,7 +67,7 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
         }
     }
     
-    @concurrent public func upload() async throws(ServiceError<Failure>) -> Success {
+    public func upload() async throws(ServiceError<Failure>) -> Success {
         try await perform() { api in
             let data: Data = try await network.upload(api: api, data: api.data ?? Data())
             guard let decoded: Success = try serializer.decode(data: data) else {
@@ -77,7 +77,14 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
         }
     }
     
-    @concurrent public func file(file: String) async throws(ServiceError<Failure>) -> Success {
+    public func download() async throws(ServiceError<Failure>) -> URL {
+        try await perform() { api in
+            let result = try await network.download(api: api)
+            return try FileUtils.copy(url: result.url, to: .cachesDirectory, contentType: result.contentType)
+        }
+    }
+
+    public func file(file: String) async throws(ServiceError<Failure>) -> Success {
         do {
             guard let url = Bundle.main.url(forResource: file, withExtension: nil) else {
                 throw ServiceError<Failure>.invalidURL
@@ -93,10 +100,10 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
     }
     
     // MARK: - Private Helpers
-    @concurrent private func prepare(payload: ServicePayload) async throws -> APIEndpoint {
+    private func prepare(payload: ServicePayload) async throws -> APIEndpoint {
         var api = APIEndpoint(
             method: payload.method,
-            baseURL: payload.baseURL,
+            host: payload.host,
             path: payload.path,
             params: payload.params,
             headers: payload.headers,
@@ -112,17 +119,8 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
         return api
     }
     
-    @concurrent public func cancel() async {
+    public func cancel() async {
         await network.cancel()
-    }
-}
-
-extension ServiceManager where Success == URL {
-    @concurrent public func download() async throws(ServiceError<Failure>) -> URL {
-        try await perform() { api in
-            let result = try await network.download(api: api)
-            return try FileUtils.copy(url: result.url, to: .cachesDirectory, contentType: result.contentType)
-        }
     }
 }
 
@@ -130,7 +128,7 @@ extension ServiceManager where Success == URL {
 extension ServiceManager {
     private func mapError(_ error: Error) -> ServiceError<Failure> {
         let serviceError: ServiceError<Failure>
-        var extraInfo: [String: Any] = [:]
+        let extraInfo: [String: Any] = [:]
         
         switch error {
         case let serviceErr as ServiceError<Failure>:

@@ -16,7 +16,8 @@ public protocol ServiceProtocol: Identifiable, Sendable {
     var progress: AsyncStream<Progress> { get }
     
     func request() async throws(ServiceError<Failure>) -> Success
-    func request() async -> Result<Success, ServiceError<Failure>>
+    func upload() async throws(ServiceError<Failure>) -> Success
+    func download() async throws(ServiceError<Failure>) -> URL
     func cancel() async
 }
 
@@ -28,14 +29,14 @@ extension ServiceProtocol {
         try await service.request()
     }
     
-    public func request() async -> Result<Success, ServiceError<Failure>> {
-        do {
-            return .success(try await request())
-        } catch {
-            return .failure(error)
-        }
+    public func upload() async throws(ServiceError<Failure>) -> Success {
+        try await service.upload()
     }
-        
+    
+    public func download() async throws(ServiceError<Failure>) -> URL {
+        try await service.download()
+    }
+
     public func cancel() async {
         await service.cancel()
     }

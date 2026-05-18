@@ -9,7 +9,7 @@ import Foundation
 
 public struct APIEndpoint: APIEndpointProtocol {
     public var method: HTTPMethod
-    public var baseURL: String
+    public var host: String
     public var path: String
     public var params: [URLQueryItem] = []
     public var headers: [String : String] = [:]

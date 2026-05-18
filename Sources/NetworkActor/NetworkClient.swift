@@ -1,5 +1,5 @@
 //
-//  NetworkActor.swift
+//  NetworkClient.swift
 //  NetworkActor
 //
 //  Created by Marcos del Castillo Camacho on 6/3/25.
@@ -16,9 +16,7 @@ protocol NetworkProtocol: Actor {
     var progress: AsyncStream<Progress> { get }
 }
 
-public actor NetworkActor: NetworkProtocol {
-    private let id = UUID().uuidString
-    
+public actor NetworkClient: NetworkProtocol {
     private let logger: Logger = Logger()
     private let session: URLSession
     private let certificates: [Data]
@@ -53,38 +51,42 @@ public actor NetworkActor: NetworkProtocol {
         if let body = request.httpBody {
             logger.debug("[REQUEST]: \(String(data: body, encoding: .utf8) ?? "")")
         }
-        
-        do {
-            defer { onTaskCompleted() }
-            let delegate = NetworkDelegate(certificates: certificates) { [weak self] task in
-                Task { [weak self] in await self?.onTaskCreated(task: task) }
-            }
-            
-            let (value, response) = try await operation(request, delegate)
+            do {
+                return try await withTaskCancellationHandler {
+                    defer { onTaskCompleted() }
 
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw NetworkError.noResponse
+                    let delegate = NetworkDelegate(certificates: certificates) { [weak self] task in
+                        Task { [weak self] in await self?.onTaskCreated(task: task) }
+                    }
+                    
+                    let (value, response) = try await operation(request, delegate)
+                    
+                    guard let httpResponse = response as? HTTPURLResponse else {
+                        throw NetworkError.noResponse
+                    }
+                    
+                    guard (200...299).contains(httpResponse.statusCode) else {
+                        throw NetworkError.http(code: httpResponse.statusCode, data: value as? Data)
+                    }
+                    
+                    logger.debug("[\(request.httpMethod ?? "")] \(request.url?.absoluteString ?? "")")
+                    logger.debug("[RESPONSE]: \(httpResponse.statusCode)")
+                    logger.debug("[RESPONSE]:\n\(JSONHelper.prettyString(from: (value as? Data) ?? Data()) ?? "")")
+                    
+                    return (value, httpResponse)
+                } onCancel: {
+                    Task { [weak self] in await self?.onTaskCompleted() }
+                }
+            } catch let error as URLError {
+                logger.error("URLError: \(error.code.rawValue) - \(error.localizedDescription)")
+                throw NetworkError.url(error)
+            } catch let error as NetworkError {
+                logger.error("NetworkError: \(error.statusCode) - \(error.localizedDescription)")
+                throw error
+            } catch {
+                logger.error("UnknownError: \(error.localizedDescription)")
+                throw NetworkError.unknown(error)
             }
-            
-            guard (200...299).contains(httpResponse.statusCode) else {
-                throw NetworkError.http(code: httpResponse.statusCode, data: value as? Data)
-            }
-
-            logger.debug("[\(request.httpMethod ?? "")] \(request.url?.absoluteString ?? "")")
-            logger.debug("[RESPONSE]: \(httpResponse.statusCode)")
-            logger.debug("[RESPONSE]:\n\(JSONHelper.prettyString(from: (value as? Data) ?? Data()) ?? "")")
-
-            return (value, httpResponse)
-        } catch let error as URLError {
-            logger.error("URLError: \(error.code.rawValue) - \(error.localizedDescription)")
-            throw .url(error)
-        } catch let error as NetworkError {
-            logger.error("NetworkError: \(error.statusCode) - \(error.localizedDescription)")
-            throw error
-        } catch {
-            logger.error("UnknownError: \(error.localizedDescription)")
-            throw NetworkError.unknown(error)
-        }
     }
     
     // MARK: - Public API
@@ -110,13 +112,20 @@ public actor NetworkActor: NetworkProtocol {
     }
 }
 
-extension NetworkActor {
+extension NetworkClient {
     public func cancel() async {
         currentTask?.cancel()
         currentTask = nil
     }
+    
+    public func cancelAll() async {
+        let tasks = await session.allTasks
+        tasks.forEach { $0.cancel() }
+    }
+}
 
-    // MARK: Task management
+// MARK: Task management
+extension NetworkClient {
     private func onTaskCreated(task: URLSessionTask) {
         currentTask = task
         progressContinuation.yield(task.progress)

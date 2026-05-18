@@ -31,7 +31,7 @@ struct NetworkTests {
 
     @Test func requestSuccess() async throws {
         let api = ServicePayload(method: .get,
-                                 baseURL: "https://base-url.com",
+                                 host: "https://base-url.com",
                                  path: "/ok",
                                  headers: ContentType.json().header)
         let endpoint = EndpointMock(endpoint: api)
@@ -60,7 +60,7 @@ struct NetworkTests {
     @Test
     func requestFailure() async throws {
         let api = ServicePayload(method: .get,
-                                 baseURL: "https://base-url.com",
+                                 host: "https://base-url.com",
                                  path: "/error",
                                  headers: ContentType.json().header)
         let endpoint = EndpointMock(endpoint: api)
@@ -87,7 +87,7 @@ struct NetworkTests {
 
             init() {
                 let payload = ServicePayload(method: .get,
-                                             baseURL: "https://jsonplaceholder.typicode.com",
+                                             host: "https://jsonplaceholder.typicode.com",
                                              path: "/todos/1",
                                              headers: ContentType.json().header)
 

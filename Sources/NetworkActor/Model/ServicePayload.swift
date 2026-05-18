@@ -9,7 +9,7 @@ import Foundation
 
 public struct ServicePayload: Sendable {
     public var method: HTTPMethod
-    public var baseURL: String
+    public var host: String
     public var path: String
     public var params: [URLQueryItem] = []
     public var headers: [String : String] = [:]
@@ -19,7 +19,7 @@ public struct ServicePayload: Sendable {
     
     public init(
         method: HTTPMethod,
-        baseURL: String,
+        host: String,
         path: String,
         params: [URLQueryItem] = [],
         headers: [String : String] = [:],
@@ -28,7 +28,7 @@ public struct ServicePayload: Sendable {
         timeout: TimeInterval = 60
     ) {
         self.method = method
-        self.baseURL = baseURL
+        self.host = host
         self.path = path
         self.params = params
         self.headers = headers
@@ -40,7 +40,9 @@ public struct ServicePayload: Sendable {
 
 extension ServicePayload {
     public var url: URL? {
-        var urlComponents = URLComponents(string: baseURL + path)
+        guard let base = URL(string: host) else { return nil }
+
+        var urlComponents = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: true)
         if urlComponents?.queryItems != nil {
             urlComponents?.queryItems?.append(contentsOf: params)
         } else {

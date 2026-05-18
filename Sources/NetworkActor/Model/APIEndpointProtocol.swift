@@ -12,7 +12,7 @@ public protocol APIEndpointProtocol: Sendable {
     var method: HTTPMethod { get }
     
     /// Base URL for the API.
-    var baseURL: String { get }
+    var host: String { get }
 
     /// Path for the endpoint.
     var path: String { get }
@@ -38,7 +38,9 @@ public protocol APIEndpointProtocol: Sendable {
 
 extension APIEndpointProtocol {
     public var urlRequest: URLRequest? {
-        var urlComponents = URLComponents(string: baseURL + path)
+        guard let base = URL(string: host) else { return nil }
+
+        var urlComponents = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: true)
         if urlComponents?.queryItems != nil {
             urlComponents?.queryItems?.append(contentsOf: params)
         } else {

@@ -83,7 +83,7 @@ struct EndpointMock {
     }
 
     var method: HTTPMethod { endpoint.method }
-    var baseURL: String { endpoint.baseURL }
+    var baseURL: String { endpoint.host }
     var path: String { endpoint.path }
     var params: [URLQueryItem] { endpoint.params }
     var headers: [String: String] { endpoint.headers.merging(["mock-header-id" : id.uuidString]) { $1 } }
@@ -96,7 +96,7 @@ struct EndpointMock {
     }
     
     var api: ServicePayload {
-        .init(method: method, baseURL: baseURL, path: path, params: params, headers: headers, body: body, data: data, timeout: timeout)
+        .init(method: method, host: baseURL, path: path, params: params, headers: headers, body: body, data: data, timeout: timeout)
     }
 }
 

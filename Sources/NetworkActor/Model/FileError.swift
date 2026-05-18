@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import UniformTypeIdentifiers
 
 public enum FileError: Error {
     case invalidTargetURL
