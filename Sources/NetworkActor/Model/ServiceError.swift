@@ -13,6 +13,7 @@ public enum ServiceError<Failure: Sendable>: Error, Identifiable {
     case storage
     case invalidURL
     case invalidFormat
+    case missingUploadData
     case noResponse
     
     case cancelled
@@ -40,7 +41,8 @@ public enum ServiceError<Failure: Sendable>: Error, Identifiable {
         case .storage: 2
         case .invalidURL: 3
         case .invalidFormat: 4
-        case .noResponse: 5
+        case .missingUploadData: 5
+        case .noResponse: 6
         
         case .cancelled: 8
         case .timedOut: 9
@@ -130,7 +132,6 @@ extension ServiceError: CustomNSError {
     public var errorUserInfo: [String: Any] {
         [
             NSLocalizedDescriptionKey: "\(id): \(self)",
-            NSLocalizedFailureReasonErrorKey: "description"
         ]
     }
 }

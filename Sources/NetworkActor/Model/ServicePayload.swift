@@ -13,8 +13,7 @@ public struct ServicePayload: Sendable {
     public var path: String
     public var params: [URLQueryItem] = []
     public var headers: [String : String] = [:]
-    public var body: Sendable? = nil
-    public var data: Data? = nil
+    public var body: HTTPBody = .empty
     public var timeout: TimeInterval = 60
     
     public init(
@@ -23,8 +22,7 @@ public struct ServicePayload: Sendable {
         path: String,
         params: [URLQueryItem] = [],
         headers: [String : String] = [:],
-        body: Sendable? = nil,
-        data: Data? = nil,
+        body: HTTPBody = .empty,
         timeout: TimeInterval = 60
     ) {
         self.method = method
@@ -33,7 +31,6 @@ public struct ServicePayload: Sendable {
         self.params = params
         self.headers = headers
         self.body = body
-        self.data = data
         self.timeout = timeout
     }
 }

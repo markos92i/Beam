@@ -14,6 +14,5 @@ public struct APIEndpoint: APIEndpointProtocol {
     public var params: [URLQueryItem] = []
     public var headers: [String : String] = [:]
     public var body: Data? = nil
-    public var data: Data? = nil
     public var timeout: TimeInterval = 30
 }

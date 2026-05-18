@@ -12,7 +12,7 @@ public enum NetworkError: Error {
     case noResponse
     case cancelled
     case url(URLError)
-    case http(code: Int, data: Data?)
+    case http(code: Int, body: Data?)
     case unknown(Error)
     
     var description: String? {
@@ -28,5 +28,13 @@ public enum NetworkError: Error {
 
     var statusCode: Int {
         if case .http(let code, _) = self { code } else { -1000 }
+    }
+    
+    var body: Data? {
+        if case .http(_, let body) = self { body } else { nil }
+    }
+    
+    var info: [String: Any] {
+        ["ResponseBody": String(data: body ?? Data(), encoding: .utf8)?.prefix(2000) ?? ""]
     }
 }

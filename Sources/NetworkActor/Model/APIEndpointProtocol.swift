@@ -8,6 +8,7 @@
 import Foundation
 
 public protocol APIEndpointProtocol: Sendable {
+    
     /// HTTP method used by the endpoint.
     var method: HTTPMethod { get }
     
@@ -25,9 +26,6 @@ public protocol APIEndpointProtocol: Sendable {
 
     /// Body data for the request.
     var body: Data? { get }
-    
-    /// Bare data for the upload.
-    var data: Data? { get }
         
     /// Timeout time for call
     var timeout: TimeInterval { get }
