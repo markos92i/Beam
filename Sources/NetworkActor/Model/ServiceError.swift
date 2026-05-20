@@ -14,6 +14,7 @@ public enum ServiceError<Failure: Sendable>: Error, Identifiable {
     case invalidURL
     case invalidFormat
     case missingUploadData
+    case missingToken
     case noResponse
     
     case cancelled
@@ -23,15 +24,7 @@ public enum ServiceError<Failure: Sendable>: Error, Identifiable {
     case sslError
     case unknown
 
-    // Errores HTTP con valor asociado genérico (el Dto de error del backend)
-    case badRequest(Failure?)
-    case unauthorized(Failure?)
-    case forbidden(Failure?)
-    case notFound(Failure?)
-    case conflict(Failure?)
-    case serverError(Failure?)
-    
-    case unexpectedCode(statusCode: Int, body: Failure?)
+    case http(status: HTTPStatus, body: Failure?)
 
     // MARK: - Identifiable Compliance
     public var id: Int {
@@ -42,8 +35,9 @@ public enum ServiceError<Failure: Sendable>: Error, Identifiable {
         case .invalidURL: 3
         case .invalidFormat: 4
         case .missingUploadData: 5
-        case .noResponse: 6
-        
+        case .missingToken: 6
+        case .noResponse: 7
+            
         case .cancelled: 8
         case .timedOut: 9
         case .noConnection: 10
@@ -51,32 +45,14 @@ public enum ServiceError<Failure: Sendable>: Error, Identifiable {
         case .sslError: 12
         case .unknown: 99
 
-        case .badRequest: 400
-        case .unauthorized: 401
-        case .forbidden: 403
-        case .notFound: 404
-        case .conflict: 409
-        case .serverError: 500
-            
-        case .unexpectedCode(let statusCode, _): statusCode
+        case .http(let code, _): code.rawValue
         }
     }
 }
 
 extension ServiceError {
-    init(from networkError: NetworkError, serializer: Serializer) {
+    init(from networkError: NetworkError, body: Failure? = nil) {
         switch networkError {
-        case .http(let statusCode, let data):
-            let decodedBody: Failure? = data.flatMap { try? serializer.decode(data: $0) }
-            switch statusCode {
-            case 400: self = .badRequest(decodedBody)
-            case 401: self = .unauthorized(decodedBody)
-            case 403: self = .forbidden(decodedBody)
-            case 404: self = .notFound(decodedBody)
-            case 409: self = .conflict(decodedBody)
-            case 500...599: self = .serverError(decodedBody)
-            default: self = .unexpectedCode(statusCode: statusCode, body: decodedBody)
-            }
         case .url(let urlError):
             switch urlError.code {
             case .timedOut: self = .timedOut
@@ -88,14 +64,18 @@ extension ServiceError {
             }
         case .noResponse: self = .noResponse
         case .invalidURL: self = .invalidURL
+        case .http(let code, _): self = .http(status: HTTPStatus(rawValue: code) ?? .serviceUnavailable, body: body)
         default: self = .unknown
         }
     }
     
     init(from authError: AuthError) {
         switch authError {
-        case .missingToken, .invalidCredentials, .failedToRefreshToken:
-            self = .unauthorized(nil)
+        case .missingToken: self = .missingToken
+        case .invalidCredentials:
+            self = .http(status: .unauthorized, body: nil)
+        case .failedToRefreshToken:
+            self = .http(status: .unauthorized, body: nil)
         case .unknown:
             self = .unknown
         }

@@ -37,10 +37,15 @@ public enum ContentType: Sendable {
     }
     
     public enum ImageFormat: String, Sendable {
+        case avif
+        case apng
+        case gif
+        case heic
+        case heif
         case jpeg
         case png
+        case svg
         case webp
-        case gif
     }
 }
 

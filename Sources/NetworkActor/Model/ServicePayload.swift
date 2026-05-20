@@ -13,7 +13,7 @@ public struct ServicePayload: Sendable {
     public var path: String
     public var params: [URLQueryItem] = []
     public var headers: [String : String] = [:]
-    public var body: HTTPBody = .empty
+    public var body: HTTPBody? = nil
     public var timeout: TimeInterval = 60
     
     public init(
@@ -22,7 +22,7 @@ public struct ServicePayload: Sendable {
         path: String,
         params: [URLQueryItem] = [],
         headers: [String : String] = [:],
-        body: HTTPBody = .empty,
+        body: HTTPBody? = nil,
         timeout: TimeInterval = 60
     ) {
         self.method = method
@@ -37,14 +37,34 @@ public struct ServicePayload: Sendable {
 
 extension ServicePayload {
     public var url: URL? {
-        guard let base = URL(string: host) else { return nil }
-
-        var urlComponents = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: true)
-        if urlComponents?.queryItems != nil {
-            urlComponents?.queryItems?.append(contentsOf: params)
+        guard let base = URL(string: host), var urlComponents = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: true) else { return nil }
+        
+        if urlComponents.queryItems != nil {
+            urlComponents.queryItems?.append(contentsOf: params)
         } else {
-            urlComponents?.queryItems = params
+            urlComponents.queryItems = params
         }
-        return urlComponents?.url
+        
+        return urlComponents.url
+    }
+    
+    public var contentHeaders: [String : String] {
+        switch body {
+        case .data: [:]
+        case .json: ContentType.json().header
+        case .multipart(let multipart): multipart.header
+        case .none: [:]
+        }
+    }
+    
+    public var allHeaders: [String : String] { headers.merging(contentHeaders) { $1 } }
+    
+    public func data(with serializer: Serializer) throws -> Data? {
+        switch body {
+        case .data(let data): data
+        case .json(let encodable): try serializer.encode(encodable)
+        case .multipart(let multipart): try multipart.body
+        case .none: nil
+        }
     }
 }

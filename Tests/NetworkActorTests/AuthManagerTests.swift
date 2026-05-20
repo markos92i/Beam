@@ -96,7 +96,7 @@ actor AuthManagerStub: AuthProtocol {
     func clear() async { await engine.clear() }
             
     static func refresh() async throws -> TokenStub {
-        try await Task.sleep(for: .milliseconds(1500))
+        try await Task.sleep(for: .seconds(2))
 
         return Token(id: "new-token", date: .now, expiration: 3600)
     }

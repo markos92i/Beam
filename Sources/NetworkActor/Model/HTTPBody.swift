@@ -11,5 +11,4 @@ public enum HTTPBody: Sendable {
     case json(Sendable)
     case data(Data)
     case multipart(MultipartForm)
-    case empty
 }

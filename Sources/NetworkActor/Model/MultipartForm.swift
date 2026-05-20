@@ -27,29 +27,33 @@ public struct MultipartForm: Sendable {
 
 extension MultipartForm {
     public var header: [String: String] { ContentType.multipart(boundary: boundary).header }
-    public var body: Data? {
+    public var body: Data {
         get throws {
-            var body = Data()
-            
-            // Text parameters
-            for (key, value) in parameters {
-                body.append("--\(boundary)\r\n".data(using: .utf8)!)
-                body.append("Content-Disposition: form-data; name=\"\(key)\"\r\n\r\n".data(using: .utf8)!)
-                body.append("\(value)\r\n".data(using: .utf8)!)
+            do {
+                var body = Data()
+                
+                // Text parameters
+                for (key, value) in parameters {
+                    body.append("--\(boundary)\r\n".data(using: .utf8)!)
+                    body.append("Content-Disposition: form-data; name=\"\(key)\"\r\n\r\n".data(using: .utf8)!)
+                    body.append("\(value)\r\n".data(using: .utf8)!)
+                }
+                
+                // Multimedia files
+                for file in media {
+                    body.append("--\(boundary)\r\n".data(using: .utf8)!)
+                    body.append("Content-Disposition: form-data; name=\"\(file.key)\"; filename=\"\(file.fileName)\"\r\n".data(using: .utf8)!)
+                    body.append("Content-Type: \(file.mimeType)\r\n\r\n".data(using: .utf8)!)
+                    body.append(try file.data)
+                    body.append("\r\n".data(using: .utf8)!)
+                }
+                
+                body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+                
+                return body
+            } catch {
+                throw FileError.invalidTargetURL
             }
-            
-            // Multimedia files
-            for file in media {
-                body.append("--\(boundary)\r\n".data(using: .utf8)!)
-                body.append("Content-Disposition: form-data; name=\"\(file.key)\"; filename=\"\(file.fileName)\"\r\n".data(using: .utf8)!)
-                body.append("Content-Type: \(file.mimeType)\r\n\r\n".data(using: .utf8)!)
-                body.append(try file.data)
-                body.append("\r\n".data(using: .utf8)!)
-            }
-            
-            body.append("--\(boundary)--\r\n".data(using: .utf8)!)
-            
-            return body
         }
     }
 }

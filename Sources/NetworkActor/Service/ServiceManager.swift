@@ -39,15 +39,15 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
     ) async throws(ServiceError<Failure>) -> Output {
         for attempt in 0...config.maxRetries {
             do {
-                return try await operation(try await request, try await data)
+                return try await operation(try await request, try request.httpBody)
             } catch let error as AuthError {
                 guard !(attempt == config.maxRetries), let auth else {
-                    throw mapError(error)
+                    throw await mapError(error)
                 }
                 
                 await auth.invalidate()
             } catch {
-                throw mapError(error)
+                throw await mapError(error)
             }
         }
         
@@ -94,7 +94,7 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
             }
             return decoded
         } catch {
-            throw mapError(error)
+            throw await mapError(error)
         }
     }
         
@@ -107,67 +107,52 @@ extension ServiceManager {
     // MARK: - Private Helpers
     private var request: URLRequest {
         get async throws {
-            let payload = api
-            
-            var api = APIEndpoint(
-                method: payload.method,
-                host: payload.host,
-                path: payload.path,
-                params: payload.params,
-                headers: payload.headers,
-                body: nil,
-                timeout: payload.timeout
-            )
-            
-            switch payload.body {
-            case .data(let data):
-                api.body = data
-            case .json(let encodable):
-                api.headers.merge(ContentType.json().header) { current, new in new }
-                api.body = try serializer.encode(payload.body)
-            case .multipart(let multipart):
-                api.headers.merge(multipart.header) { current, new in new }
-                api.body = nil
-            case .empty:
-                api.body = nil
+            guard let base = URL(string: api.host),
+                  var urlComponents = URLComponents(url: base.appendingPathComponent(api.path), resolvingAgainstBaseURL: true)
+            else {
+                throw ServiceError<Failure>.invalidURL
             }
+
+            if urlComponents.queryItems != nil {
+                urlComponents.queryItems?.append(contentsOf: api.params)
+            } else {
+                urlComponents.queryItems = api.params
+            }
+
+            guard let url = urlComponents.url else { throw ServiceError<Failure>.invalidURL }
             
+            var request = URLRequest(url: url)
+            request.httpMethod = api.method.rawValue
             if let auth {
-                api.headers.merge(try await auth.authHeader) { $1 }
+                request.allHTTPHeaderFields = api.allHeaders.merging(try await auth.authHeader) { $1 }
+            } else {
+                request.allHTTPHeaderFields = api.allHeaders
             }
-            
-            guard let request = api.urlRequest else { throw ServiceError<Failure>.invalidURL }
+            request.httpBody = try api.data(with: serializer)
+            request.timeoutInterval = api.timeout
             
             return request
-        }
-    }
-    
-    private var data: Data? {
-        get async throws {
-            switch api.body {
-            case .data(let data): data
-            case .json(let encodable): try serializer.encode(encodable)
-            case .multipart(let multipart): try multipart.body
-            case .empty: nil
-            }
         }
     }
 }
 
 // MARK: Error management and reporting
 extension ServiceManager {
-    private func mapError(_ error: Error) -> ServiceError<Failure> {
+    private func mapError(_ error: Error) async -> ServiceError<Failure> {
         let serviceError: ServiceError<Failure>
         var extraInfo: [String: Any] = [:]
-        
+        extraInfo["RequestURL"] = "[\(api.method.description)] \(api.url?.absoluteString ?? "Invalid URL")"
+        extraInfo["RequestBody"] = String(data: (try? api.data(with: serializer)) ?? Data(), encoding: .utf8)?.prefix(2000) ?? "N/A"
+
         switch error {
         case let error as ServiceError<Failure>:
             serviceError = error
         case let error as NetworkError:
-            serviceError = ServiceError(from: error, serializer: serializer)
+            let body: Failure? = if let data = error.body, let body: Failure? = try? serializer.decode(data: data) { body } else { nil }
+            serviceError = ServiceError(from: error, body: body)
             extraInfo = error.info
         case let error as URLError:
-            serviceError = ServiceError(from: NetworkError.url(error), serializer: serializer)
+            serviceError = ServiceError(from: NetworkError.url(error))
         case let error as AuthError:
             serviceError = ServiceError(from: error)
         case let error as FileError:
@@ -179,16 +164,8 @@ extension ServiceManager {
             serviceError = .unknown
         }
         
-        report(error: error, info: extraInfo)
-        return serviceError
-    }
-    
-    private func report(error: Error, info: [String: Any]) {
-        let requestContext: [String: Any] = [
-            "RequestURL": "[\(api.method.description)] \(api.url?.absoluteString ?? "Invalid URL")",
-            "RequestBody": String(data: (try? serializer.encode(api.body)) ?? Data(), encoding: .utf8)?.prefix(2000) ?? "N/A",
-        ].merging(info) { $1 }
+        crash?.report(error: error, userInfo: extraInfo)
         
-        crash?.report(error: error, userInfo: requestContext)
+        return serviceError
     }
 }
