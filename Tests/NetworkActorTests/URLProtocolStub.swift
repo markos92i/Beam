@@ -83,31 +83,22 @@ struct EndpointMock {
     }
 
     var method: HTTPMethod { endpoint.method }
-    var baseURL: String { endpoint.host }
+    var host: String { endpoint.host }
     var path: String { endpoint.path }
     var params: [URLQueryItem] { endpoint.params }
     var headers: [String: String] { endpoint.headers.merging(["mock-header-id" : id.uuidString]) { $1 } }
-    var body: Sendable? { endpoint.body }
-    var data: Data? { endpoint.data }
+    var body: HTTPBody? { endpoint.body }
     var timeout: TimeInterval { endpoint.timeout }
 
     func match(request: URLRequest) -> Bool {
         request.allHTTPHeaderFields?["mock-header-id"] == id.uuidString
     }
-    
-    var api: ServicePayload {
-        .init(method: method, host: baseURL, path: path, params: params, headers: headers, body: body, data: data, timeout: timeout)
-    }
 }
 
 extension EndpointMock {
-    var url: URL? {
-        var urlComponents = URLComponents(string: baseURL + path)
-        if urlComponents?.queryItems != nil {
-            urlComponents?.queryItems?.append(contentsOf: params)
-        } else {
-            urlComponents?.queryItems = params
-        }
-        return urlComponents?.url
+    var api: ServicePayload {
+        .init(method: method, host: host, path: path, params: params, headers: headers, body: body, timeout: timeout)
     }
+
+    var url: URL? { api.url }
 }
