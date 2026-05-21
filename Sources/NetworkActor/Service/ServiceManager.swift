@@ -76,9 +76,36 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
         }
     }
     
+    public func upload(url: URL) async throws(ServiceError<Failure>) -> Success {
+        try await perform() { request, _ in
+            let response: Data = try await network.upload(for: request, url: url)
+            guard let decoded: Success = try serializer.decode(data: response) else {
+                throw ServiceError<Failure>.decode
+            }
+            return decoded
+        }
+    }
+
+    public func upload(resumeFrom data: Data) async throws(ServiceError<Failure>) -> Success {
+        try await perform() { request, _ in
+            let response: Data = try await network.upload(for: request, data: data)
+            guard let decoded: Success = try serializer.decode(data: response) else {
+                throw ServiceError<Failure>.decode
+            }
+            return decoded
+        }
+    }
+    
     public func download() async throws(ServiceError<Failure>) -> URL {
-        try await perform() { request, data in
+        try await perform() { request, _ in
             let response = try await network.download(for: request)
+            return try FileUtils.copy(url: response.url, to: .cachesDirectory, contentType: response.contentType)
+        }
+    }
+    
+    public func download(resumeFrom data: Data) async throws(ServiceError<Failure>) -> URL {
+        try await perform() { request, _ in
+            let response = try await network.download(for: request, resumeFrom: data)
             return try FileUtils.copy(url: response.url, to: .cachesDirectory, contentType: response.contentType)
         }
     }
@@ -98,7 +125,7 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
         }
     }
         
-    public func cancel() async {
+    public func cancel() async -> Data? {
         await network.cancel()
     }
 }

@@ -74,16 +74,3 @@ struct Logger {
         log(msg(), level: .error, file: file, function: function, line: line)
     }
 }
-
-// MARK: - Pretty JSON Helper (puede ir en otro archivo)
-public struct JSONHelper {
-    public static func prettyString(from data: Data) -> String? {
-        guard let object = try? JSONSerialization.jsonObject(with: data, options: []),
-              let prettyData = try? JSONSerialization.data(withJSONObject: object, options: .prettyPrinted),
-              let prettyString = String(data: prettyData, encoding: .utf8)
-        else {
-            return String(data: data, encoding: .utf8)
-        }
-        return prettyString
-    }
-}

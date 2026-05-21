@@ -18,7 +18,7 @@ public protocol ServiceProtocol: Identifiable, Sendable {
     func request() async throws(ServiceError<Failure>) -> Success
     func upload() async throws(ServiceError<Failure>) -> Success
     func download() async throws(ServiceError<Failure>) -> URL
-    func cancel() async
+    func cancel() async -> Data?
 }
 
 extension ServiceProtocol {
@@ -33,11 +33,23 @@ extension ServiceProtocol {
         try await service.upload()
     }
     
+    public func upload(url: URL) async throws(ServiceError<Failure>) -> Success {
+        try await service.upload(url: url)
+    }
+
+    public func upload(resumeFrom data: Data) async throws(ServiceError<Failure>) -> Success {
+        try await service.upload(resumeFrom: data)
+    }
+    
     public func download() async throws(ServiceError<Failure>) -> URL {
         try await service.download()
     }
+    
+    public func download(resumeFrom data: Data) async throws(ServiceError<Failure>) -> URL {
+        try await service.download(resumeFrom: data)
+    }
 
-    public func cancel() async {
+    public func cancel() async -> Data? {
         await service.cancel()
     }
 }

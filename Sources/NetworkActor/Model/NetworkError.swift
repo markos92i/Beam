@@ -9,6 +9,7 @@ import Foundation
 
 public enum NetworkError: Error {
     case invalidURL
+    case invalidResume
     case noResponse
     case cancelled
     case url(URLError)
@@ -17,9 +18,10 @@ public enum NetworkError: Error {
     
     var description: String? {
         switch self {
-        case .invalidURL: "La URL no es válida"
-        case .noResponse: "No se recibió respuesta del servidor"
-        case .cancelled: "La operación fue cancelada"
+        case .invalidURL: "The URL is invalid"
+        case .invalidResume: "The resume data is missing or is invalid"
+        case .noResponse: "Didnt receive response from server"
+        case .cancelled: "Operation was cancelled"
         case .url(let error): error.localizedDescription
         case .http(let code, _): HTTPStatus(rawValue: code)?.description
         case .unknown(let error): error.localizedDescription

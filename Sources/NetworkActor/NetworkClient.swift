@@ -9,10 +9,12 @@ import Foundation
 
 // MARK: - Protocol Definition
 protocol NetworkProtocol: Actor {
-    func data(for: URLRequest) async throws(NetworkError) -> Data
     func upload(for: URLRequest, data: Data) async throws(NetworkError) -> Data
+    func upload(for request: URLRequest, resumeFrom data: Data) async throws(NetworkError) -> Data
     func download(for: URLRequest) async throws(NetworkError) -> (url: URL, contentType: String)
-    
+    func download(for request: URLRequest, resumeFrom data: Data) async throws(NetworkError) -> (url: URL, contentType: String)
+    func cancel() async -> Data?
+
     var progress: AsyncStream<Progress> { get }
 }
 
@@ -21,7 +23,7 @@ public actor NetworkClient: NetworkProtocol {
     private let session: URLSession
     private let certificates: [Data]
     
-    private var currentTask: URLSessionTask?
+    private var task: URLSessionTask?
     private let progressContinuation: AsyncStream<Progress>.Continuation
     public let progress: AsyncStream<Progress>
 
@@ -46,9 +48,10 @@ public actor NetworkClient: NetworkProtocol {
         operation: (URLSessionTaskDelegate) async throws -> (T, URLResponse)
     ) async throws(NetworkError) -> (T, HTTPURLResponse) {
         logger.debug("[\(request.httpMethod ?? "")] \(request.url?.absoluteString ?? "")")
-        if let body = request.httpBody {
+        if let body = request.httpBody, !body.isEmpty {
             logger.debug("[REQUEST]: \(String(data: body, encoding: .utf8) ?? "")")
         }
+        
         do {
             return try await withTaskCancellationHandler {
                 defer { onTaskCompleted() }
@@ -69,8 +72,11 @@ public actor NetworkClient: NetworkProtocol {
                 
                 logger.debug("[\(request.httpMethod ?? "")] \(request.url?.absoluteString ?? "")")
                 logger.debug("[RESPONSE]: \(httpResponse.statusCode)")
-                logger.debug("[RESPONSE]:\n\(JSONHelper.prettyString(from: (value as? Data) ?? Data()) ?? "")")
-                
+                if let data = value as? Data {
+                    logger.debug("[RESPONSE BODY]:\n\(JSONHelper.prettyString(from: data) ?? "Formato inválido")")
+                } else if let url = value as? URL {
+                    logger.debug("[RESPONSE FILE]: Archivo descargado en \(url.path)")
+                }
                 return (value, httpResponse)
             } onCancel: {
                 Task { [weak self] in await self?.onTaskCompleted() }
@@ -102,35 +108,80 @@ public actor NetworkClient: NetworkProtocol {
         return result
     }
     
+    public func upload(for request: URLRequest, url: URL) async throws(NetworkError) -> Data {
+        let (result, _) = try await execute(for: request) { delegate in
+            try await session.upload(for: request, fromFile: url, delegate: delegate)
+        }
+        return result
+    }
+
+    public func upload(for request: URLRequest, resumeFrom data: Data) async throws(NetworkError) -> Data {
+        let (result, _) = try await execute(for: request) { delegate in
+            try await session.upload(resumeFrom: data, delegate: delegate)
+        }
+        return result
+    }
+    
     public func download(for request: URLRequest) async throws(NetworkError) -> (url: URL, contentType: String) {
         let (result, response) = try await execute(for: request) { delegate in
             try await session.download(for: request, delegate: delegate)
         }
-        return (result, response.contentType)
+        return (result, response.mimeType ?? "application/octet-stream")
+    }
+    
+    public func download(for request: URLRequest, resumeFrom data: Data) async throws(NetworkError) -> (url: URL, contentType: String) {
+        let (result, response) = try await execute(for: request) { delegate in
+            return try await session.download(resumeFrom: data, delegate: delegate)
+        }
+        return (result, response.mimeType ?? "application/octet-stream")
     }
 }
 
 extension NetworkClient {
-    public func cancel() async {
-        currentTask?.cancel()
-        currentTask = nil
-    }
-    
-    public func cancelAll() async {
-        let tasks = await session.allTasks
-        tasks.forEach { $0.cancel() }
+    public func cancel() async -> Data? {
+        defer { task = nil }
+        
+        switch task {
+        case let task as URLSessionUploadTask:
+            return await task.cancelByProducingResumeData()
+        case let task as URLSessionDownloadTask:
+            return await task.cancelByProducingResumeData()
+        default:
+            task?.cancel()
+            return nil
+        }
     }
 }
 
 // MARK: Task management
 extension NetworkClient {
     private func onTaskCreated(task: URLSessionTask) {
-        currentTask = task
+        self.task = task
         progressContinuation.yield(task.progress)
-        progressContinuation.finish()
     }
     
     private func onTaskCompleted() {
-        currentTask = nil
+        task = nil
+    }
+}
+
+// MARK: URLSession extension
+extension URLSession {
+    func upload(resumeFrom data: Data, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse) {
+        return try await withCheckedThrowingContinuation { continuation in
+            let task = self.uploadTask(withResumeData: data) { data, response, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                guard let data, let response else {
+                    continuation.resume(throwing: URLError(.badServerResponse))
+                    return
+                }
+                continuation.resume(returning: (data, response))
+            }
+            task.delegate = delegate
+            task.resume()
+        }
     }
 }

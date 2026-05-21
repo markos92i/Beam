@@ -72,19 +72,15 @@ extension ServiceError {
     init(from authError: AuthError) {
         switch authError {
         case .missingToken: self = .missingToken
-        case .invalidCredentials:
-            self = .http(status: .unauthorized, body: nil)
-        case .failedToRefreshToken:
-            self = .http(status: .unauthorized, body: nil)
-        case .unknown:
-            self = .unknown
+        case .invalidCredentials: self = .http(status: .unauthorized, body: nil)
+        case .failedToRefreshToken: self = .http(status: .unauthorized, body: nil)
+        case .unknown: self = .unknown
         }
     }
     
     init(from fileError: FileError) {
         switch fileError {
-        case .invalidTargetURL, .removeFailed, .copyFailed:
-            self = .storage
+        case .invalidTargetURL, .removeFailed, .copyFailed: self = .storage
         }
     }
     
