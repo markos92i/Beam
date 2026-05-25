@@ -1,5 +1,5 @@
 //
-//  ServiceManager.swift
+//  Service.swift
 //  NetworkActor
 //
 //  Created by Marcos del Castillo Camacho on 12/3/25.
@@ -7,7 +7,7 @@
 
 import SwiftUI
 
-public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
+public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
     public var id = UUID().uuidString
     
     public var network: NetworkClient
@@ -130,7 +130,7 @@ public struct ServiceManager<Success: Sendable, Failure: Sendable>: Sendable {
     }
 }
 
-extension ServiceManager {
+extension Service {
     // MARK: - Private Helpers
     private var request: URLRequest {
         get async throws {
@@ -164,7 +164,7 @@ extension ServiceManager {
 }
 
 // MARK: Error management and reporting
-extension ServiceManager {
+extension Service {
     private func mapError(_ error: Error) async -> ServiceError<Failure> {
         let serviceError: ServiceError<Failure>
         var extraInfo: [String: Any] = [:]

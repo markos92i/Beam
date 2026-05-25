@@ -12,12 +12,15 @@ public protocol ServiceProtocol: Identifiable, Sendable {
     associatedtype Failure: Sendable
     
     var id: String { get }
-    var service: ServiceManager<Success, Failure> { get }
+    var service: Service<Success, Failure> { get }
     var progress: AsyncStream<Progress> { get }
     
     func request() async throws(ServiceError<Failure>) -> Success
     func upload() async throws(ServiceError<Failure>) -> Success
+    func upload(url: URL) async throws(ServiceError<Failure>) -> Success
+    func upload(resumeFrom data: Data) async throws(ServiceError<Failure>) -> Success
     func download() async throws(ServiceError<Failure>) -> URL
+    func download(resumeFrom data: Data) async throws(ServiceError<Failure>) -> URL
     func cancel() async -> Data?
 }
 
