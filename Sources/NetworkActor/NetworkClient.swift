@@ -100,7 +100,7 @@ public actor NetworkClient: NetworkProtocol {
     // MARK: - Public API
     public func data(for request: URLRequest) async throws(NetworkError) -> Data {
         let (result, _) = try await execute(for: request) { delegate in
-            return try await session.data(for: request, delegate: delegate)
+            try await session.data(for: request, delegate: delegate)
         }
         return result
     }
@@ -135,7 +135,7 @@ public actor NetworkClient: NetworkProtocol {
     
     public func download(for request: URLRequest, resumeFrom data: Data) async throws(NetworkError) -> (url: URL, contentType: String) {
         let (result, response) = try await execute(for: request) { delegate in
-            return try await session.download(resumeFrom: data, delegate: delegate)
+            try await session.download(resumeFrom: data, delegate: delegate)
         }
         return (result, response.mimeType ?? ContentType.data.value)
     }

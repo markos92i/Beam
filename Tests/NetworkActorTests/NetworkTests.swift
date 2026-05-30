@@ -93,7 +93,7 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             return (expectedData, response)
         }
-        let networkClient = NetworkClient(session: MockSession(responseStub, delay: 5))
+        let networkClient = NetworkClient(session: MockSession(responseStub, delay: 2))
         let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
         
         do {
@@ -183,6 +183,36 @@ struct NetworkTests {
         #expect(dataFromFile == expectedDownloadedData)
 
         try? FileManager.default.removeItem(at: response)
+    }
+    
+    @Test
+    func downloadCancel() async throws {
+        let expectedDownloadedData = "Downloaded file content".data(using: .utf8)!
+                
+        let api = ServicePayload(method: .get,
+                                 host: "https://base-url.com",
+                                 path: "/download",
+                                 headers: [:])
+
+        let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (expectedDownloadedData, response)
+        }
+        let networkClient = NetworkClient(session: MockSession(responseStub, delay: 2))
+        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+
+        do {
+            Task {
+                try await Task.sleep(for: .seconds(0))
+                let _ = await service.cancel()
+            }
+            
+            let response = try await service.download()
+            #expect(Bool(false))
+            try? FileManager.default.removeItem(at: response)
+        } catch {
+            #expect(error == .cancelled)
+        }
     }
     
     @Test
