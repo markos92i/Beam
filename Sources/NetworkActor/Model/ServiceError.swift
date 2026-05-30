@@ -64,7 +64,7 @@ extension ServiceError {
             }
         case .noResponse: self = .noResponse
         case .invalidURL: self = .invalidURL
-        case .http(let code, _): self = .http(status: HTTPStatus(rawValue: code) ?? .serviceUnavailable, body: body)
+        case .http(let status, _): self = .http(status: status, body: body)
         default: self = .unknown
         }
     }

@@ -20,7 +20,7 @@ protocol NetworkProtocol: Actor {
 
 public actor NetworkClient: NetworkProtocol {
     private let logger: Logger = Logger()
-    private let session: URLSession
+    private let session: any NetworkSession
     private let certificates: [Data]
     
     private var task: URLSessionTask?
@@ -28,7 +28,7 @@ public actor NetworkClient: NetworkProtocol {
     public let progress: AsyncStream<Progress>
 
     public init(
-        session: URLSession = .shared,
+        session: any NetworkSession = URLSession.shared,
         certificates: [Data] = []
     ) {
         self.session = session
@@ -66,10 +66,14 @@ public actor NetworkClient: NetworkProtocol {
                     throw NetworkError.noResponse
                 }
                 
-                guard (200...299).contains(httpResponse.statusCode) else {
-                    throw NetworkError.http(code: httpResponse.statusCode, body: value as? Data)
+                guard let status = HTTPStatus(rawValue: httpResponse.statusCode) else {
+                    throw NetworkError.http(status: .undefined, body: value as? Data)
                 }
                 
+                guard status.type == .success else {
+                    throw NetworkError.http(status: status, body: value as? Data)
+                }
+
                 logger.debug("[\(request.httpMethod ?? "")] \(request.url?.absoluteString ?? "")")
                 logger.debug("[RESPONSE]: \(httpResponse.statusCode)")
                 if let data = value as? Data {
@@ -162,26 +166,5 @@ extension NetworkClient {
     
     private func onTaskCompleted() {
         task = nil
-    }
-}
-
-// MARK: URLSession extension
-extension URLSession {
-    func upload(resumeFrom data: Data, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse) {
-        return try await withCheckedThrowingContinuation { continuation in
-            let task = self.uploadTask(withResumeData: data) { data, response, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                guard let data, let response else {
-                    continuation.resume(throwing: URLError(.badServerResponse))
-                    return
-                }
-                continuation.resume(returning: (data, response))
-            }
-            task.delegate = delegate
-            task.resume()
-        }
     }
 }

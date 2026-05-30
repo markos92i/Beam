@@ -88,7 +88,7 @@ public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
 
     public func upload(resumeFrom data: Data) async throws(ServiceError<Failure>) -> Success {
         try await perform() { request, _ in
-            let response: Data = try await network.upload(for: request, data: data)
+            let response: Data = try await network.upload(for: request, resumeFrom: data)
             guard let decoded: Success = try serializer.decode(data: response) else {
                 throw ServiceError<Failure>.decode
             }

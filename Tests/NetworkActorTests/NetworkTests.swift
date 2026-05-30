@@ -9,49 +9,29 @@ import Foundation
 import Testing
 @testable import NetworkActor
 
+@Suite
 struct NetworkTests {
-    private let mockSession: URLSession = {
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [URLProtocolStub.self]
-        return URLSession(configuration: config)
-    }()
-    
-    
-    private let defaultEncoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }()
-    
-    private let defaultDecoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
-    
-    @Test func requestSuccess() async throws {
+    @Test
+    func requestSuccess() async throws {
+        let mockBody = ResponseMock(id: "123", value: 1000)
+        let expectedData = try JSONEncoder().encode(mockBody)
+        let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (expectedData, response)
+        }
+                
         let api = ServicePayload(method: .get,
                                  host: "https://base-url.com",
                                  path: "/ok",
                                  headers: ContentType.json().header)
-        let endpoint = EndpointMock(endpoint: api)
-        
-        let responseBody = ResponseMock(id: "my-id", value: 0)
-        guard let responseData = try? defaultEncoder.encode(responseBody) else {
-            #expect(Bool(false))
-            return
-        }
-        
-        URLProtocolStub.addStub(endpoint: endpoint) {
-            let urlResponse = HTTPURLResponse(url: endpoint.url!, statusCode: 200, httpVersion: nil, headerFields: nil)
-            return StubResponse(data: responseData, response: urlResponse)
-        }
-        
-        let service = Service<ResponseMock, ServiceError<Void>>(network: .init(session: mockSession), api: endpoint.api)
-        
-        let response: ResponseMock = try await service.request()
-        #expect(response.id == "my-id")
-        #expect(response.value == 0)
+
+        // Inyectas el mock encapsulado
+        let networkClient = NetworkClient(session: MockSession(responseStub))
+        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+
+        let result: ResponseMock = try await service.request()
+        #expect(result.id == mockBody.id)
+        #expect(result.value == mockBody.value)
     }
     
     @Test
@@ -60,15 +40,14 @@ struct NetworkTests {
                                  host: "https://base-url.com",
                                  path: "/error",
                                  headers: ContentType.json().header)
-        let endpoint = EndpointMock(endpoint: api)
-        
-        URLProtocolStub.addStub(endpoint: endpoint) {
-            let urlResponse = HTTPURLResponse(url: endpoint.url!, statusCode: 500, httpVersion: nil, headerFields: nil)
-            return StubResponse(data: nil, response: urlResponse)
+
+        let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
+            return (Data(), response)
         }
-        
-        let service = Service<ResponseMock, ServiceError<Void>>(network: .init(session: mockSession), api: endpoint.api)
-        
+        let networkClient = NetworkClient(session: MockSession(responseStub))
+        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+
         do {
             let _: ResponseMock = try await service.request()
             #expect(Bool(false))
@@ -79,46 +58,96 @@ struct NetworkTests {
     
     @Test
     func uploadSuccess() async throws {
-        let api = ServicePayload(method: .post,
+        let mockBody = ResponseMock(id: "upload-id", value: 1000)
+        let expectedData = try JSONEncoder().encode(mockBody)
+                
+        let api = ServicePayload(method: .get,
                                  host: "https://base-url.com",
                                  path: "/upload",
                                  headers: [:],
                                  body: .data("Dummy file content".data(using: .utf8)!))
-        let endpoint = EndpointMock(endpoint: api)
-        
-        // El mock de respuesta (lo que nos devuelve el servidor tras subir)
-        let responseBody = ResponseMock(id: "upload-id", value: 100)
-        let responseData = try defaultEncoder.encode(responseBody)
-        
-        URLProtocolStub.addStub(endpoint: endpoint) {
-            let urlResponse = HTTPURLResponse(url: endpoint.url!, statusCode: 201, httpVersion: nil, headerFields: nil)
-            return StubResponse(data: responseData, response: urlResponse)
+
+        let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
+            return (expectedData, response)
         }
-                
-        let service = Service<ResponseMock, ServiceError<Void>>(network: .init(session: mockSession), api: endpoint.api)
-        
-        let response: ResponseMock = try await service.upload()
-        #expect(response.id == "upload-id")
-        #expect(response.value == 100)
+        let networkClient = NetworkClient(session: MockSession(responseStub))
+        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+
+        let result: ResponseMock = try await service.upload()
+        #expect(result.id == mockBody.id)
+        #expect(result.value == mockBody.value)
     }
     
     @Test
+    func uploadURLSuccess() async throws {
+        let mockBody = ResponseMock(id: "upload-id", value: 1000)
+        let expectedData = try JSONEncoder().encode(mockBody)
+        let temporaryURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try expectedData.write(to: temporaryURL)
+        defer { try? FileManager.default.removeItem(at: temporaryURL) }
+                
+        let api = ServicePayload(method: .get,
+                                 host: "https://base-url.com",
+                                 path: "/upload",
+                                 headers: [:],
+                                 body: .data("Dummy file content".data(using: .utf8)!))
+        
+        let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
+            let data = try Data(contentsOf: temporaryURL)
+            return (data, response)
+        }
+        let networkClient = NetworkClient(session: MockSession(responseStub))
+        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+
+        let result: ResponseMock = try await service.upload(url: temporaryURL)
+        #expect(result.id == mockBody.id)
+        #expect(result.value == mockBody.value)
+    }
+    
+    @Test
+    func uploadResumeSuccess() async throws {
+        let expectedResponse = ResponseMock(id: "upload-id", value: 1000)
+        let expectedData = try JSONEncoder().encode(expectedResponse)
+
+        let resumeData = "{ resume: true }".data(using: .utf8)!
+        
+        let api = ServicePayload(method: .put,
+                                 host: "https://base-url.com",
+                                 path: "/upload",
+                                 headers: [:],
+                                 body: .data("Dummy file content".data(using: .utf8)!))
+
+        let resumeStub: (@Sendable (Data) async throws -> (Data, URLResponse))? = { data in
+            let response = HTTPURLResponse(url: URL(string: "https://base-url.com")!, statusCode: 201, httpVersion: nil, headerFields: nil)!
+            #expect(data == resumeData)
+            return (expectedData, response)
+        }
+        let networkClient = NetworkClient(session: MockSession(nil, resumeStub))
+        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+
+        let result: ResponseMock = try await service.upload(resumeFrom: resumeData)
+        #expect(result.id == expectedResponse.id)
+        #expect(result.value == expectedResponse.value)
+    }
+
+    @Test
     func downloadSuccess() async throws {
+        let expectedDownloadedData = "Downloaded file content".data(using: .utf8)!
+                
         let api = ServicePayload(method: .get,
                                  host: "https://base-url.com",
                                  path: "/download",
                                  headers: [:])
-        let endpoint = EndpointMock(endpoint: api)
-        
-        let expectedDownloadedData = "Downloaded file content".data(using: .utf8)!
-        
-        URLProtocolStub.addStub(endpoint: endpoint) {
-            let urlResponse = HTTPURLResponse(url: endpoint.url!, statusCode: 200, httpVersion: nil, headerFields: nil)
-            return StubResponse(data: expectedDownloadedData, response: urlResponse)
+
+        let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (expectedDownloadedData, response)
         }
-        
-        let service = Service<URL, ServiceError<Void>>(network: .init(session: mockSession), api: endpoint.api)
-        
+        let networkClient = NetworkClient(session: MockSession(responseStub))
+        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+
         let response: URL = try await service.download()
         let dataFromFile = try Data(contentsOf: response)
         #expect(dataFromFile == expectedDownloadedData)

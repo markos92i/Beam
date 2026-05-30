@@ -13,7 +13,7 @@ public enum NetworkError: Error {
     case noResponse
     case cancelled
     case url(URLError)
-    case http(code: Int, body: Data?)
+    case http(status: HTTPStatus, body: Data?)
     case unknown(Error)
     
     var description: String? {
@@ -23,13 +23,17 @@ public enum NetworkError: Error {
         case .noResponse: "Didnt receive response from server"
         case .cancelled: "Operation was cancelled"
         case .url(let error): error.localizedDescription
-        case .http(let code, _): HTTPStatus(rawValue: code)?.description
+        case .http(let status, _): status.description
         case .unknown(let error): error.localizedDescription
         }
     }
 
+    public var status: HTTPStatus {
+        if case .http(let status, _) = self { status } else { .undefined }
+    }
+
     var statusCode: Int {
-        if case .http(let code, _) = self { code } else { -1000 }
+        if case .http(let code, _) = self { code.rawValue } else { -1000 }
     }
     
     var body: Data? {

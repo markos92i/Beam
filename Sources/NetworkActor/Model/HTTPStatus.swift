@@ -22,6 +22,8 @@ public enum HTTPStatus: Int, Error, CustomStringConvertible {
         case serverError
         case undefined
     }
+    
+    case undefined = 0
 
     // MARK: - Informational - 1xx
 
@@ -232,7 +234,7 @@ public enum HTTPStatus: Int, Error, CustomStringConvertible {
     case networkAuthenticationRequired = 511
 
     /// The class (or group) which the status code belongs to.
-    public var responseType: ResponseType {
+    public var type: ResponseType {
         switch self.rawValue {
         case 100..<200: .informational
         case 200..<300: .success
