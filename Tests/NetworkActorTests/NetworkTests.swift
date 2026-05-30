@@ -79,6 +79,37 @@ struct NetworkTests {
     }
     
     @Test
+    func uploadCancel() async throws {
+        let mockBody = ResponseMock(id: "upload-id", value: 1000)
+        let expectedData = try JSONEncoder().encode(mockBody)
+                
+        let api = ServicePayload(method: .get,
+                                 host: "https://base-url.com",
+                                 path: "/upload",
+                                 headers: [:],
+                                 body: .data("Dummy file content".data(using: .utf8)!))
+
+        let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
+            return (expectedData, response)
+        }
+        let networkClient = NetworkClient(session: MockSession(responseStub, delay: 5))
+        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+        
+        do {
+            Task {
+                try await Task.sleep(for: .seconds(0))
+                let _ = await service.cancel()
+            }
+            
+            let _ = try await service.upload()
+            #expect(Bool(false))
+        } catch {
+            #expect(error == .cancelled)
+        }
+    }
+
+    @Test
     func uploadURLSuccess() async throws {
         let mockBody = ResponseMock(id: "upload-id", value: 1000)
         let expectedData = try JSONEncoder().encode(mockBody)
@@ -180,7 +211,7 @@ struct NetworkTests {
     }
 
     @Test
-    func requestOnlineMock() async throws {
+    func requestOnline() async throws {
         struct TestService: ServiceProtocol {
             var service: Service<ResponseOnlineMock, Void>
             
@@ -206,7 +237,36 @@ struct NetworkTests {
         }
     }
     
-    
+    @Test
+    func requestOnlineCancel() async throws {
+        struct TestService: ServiceProtocol {
+            var service: Service<ResponseOnlineMock, Void>
+            
+            init() {
+                let payload = ServicePayload(method: .get,
+                                             host: "https://jsonplaceholder.typicode.com",
+                                             path: "/todos/1",
+                                             headers: ContentType.json().header)
+                
+                self.service = .init(network: .init(),
+                                     auth: nil,
+                                     crash: nil,
+                                     api: payload)
+            }
+        }
+        
+        do {
+            let service = TestService()
+            Task {
+                try await Task.sleep(for: .seconds(0.05))
+                let _ = await service.cancel()
+            }
+            let _: ResponseOnlineMock = try await service.request()
+            #expect(Bool(false))
+        } catch {
+            #expect(error == .cancelled)
+        }
+    }
 }
 
 private struct ResponseMock: Codable, Equatable {

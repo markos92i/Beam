@@ -13,6 +13,9 @@ actor MockSession: NetworkSession {
     var resumeStub: (@Sendable (Data) async throws -> (Data, URLResponse))?
     var delay: TimeInterval?
     
+    private let dummySession = URLSession(configuration: .default)
+    private var activeTask: URLSessionTask?
+
     init(
         _ requestStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = nil,
         _ resumeStub: (@Sendable (Data) async throws -> (Data, URLResponse))? = nil,
@@ -22,16 +25,28 @@ actor MockSession: NetworkSession {
         self.resumeStub = resumeStub
         self.delay = delay
     }
-
-    func data(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse) {
-        try await applyDelayIfNeeded()
+    
+    // MARK: - Helper para simular el ciclo del delegado
+    private func triggerDelegateCallbacks(for request: URLRequest, delegate: (any URLSessionTaskDelegate)?) async throws {
+        guard let delegate = delegate else { return }
         
+        let task = dummySession.dataTask(with: request)
+        activeTask = task
+        
+        delegate.urlSession?(dummySession, didCreateTask: task)
+    }
+    
+    func data(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse) {
+        try await triggerDelegateCallbacks(for: request, delegate: delegate)
+        try await applyDelayIfNeeded()
+                
         guard let requestStub else { throw URLError(.badServerResponse) }
         
         return try await requestStub(request)
     }
 
     func upload(for request: URLRequest, from data: Data, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse) {
+        try await triggerDelegateCallbacks(for: request, delegate: delegate)
         try await applyDelayIfNeeded()
         
         guard let requestStub else { throw URLError(.badServerResponse) }
@@ -40,6 +55,7 @@ actor MockSession: NetworkSession {
     }
 
     func upload(for request: URLRequest, fromFile: URL, delegate: (any URLSessionTaskDelegate)?) async throws -> (Data, URLResponse) {
+        try await triggerDelegateCallbacks(for: request, delegate: delegate)
         try await applyDelayIfNeeded()
         
         guard let requestStub else { throw URLError(.badServerResponse) }
@@ -48,6 +64,8 @@ actor MockSession: NetworkSession {
     }
     
     func upload(resumeFrom data: Data, delegate: (any URLSessionTaskDelegate)?) async throws -> (Data, URLResponse) {
+        let dummyRequest = URLRequest(url: URL(string: "https://mock.resume")!)
+        try await triggerDelegateCallbacks(for: dummyRequest, delegate: delegate)
         try await applyDelayIfNeeded()
         
         guard let resumeStub else { throw URLError(.badServerResponse) }
@@ -56,6 +74,7 @@ actor MockSession: NetworkSession {
     }
 
     func download(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws -> (URL, URLResponse) {
+        try await triggerDelegateCallbacks(for: request, delegate: delegate)
         try await applyDelayIfNeeded()
         
         guard let requestStub else { throw URLError(.badServerResponse) }
@@ -69,8 +88,10 @@ actor MockSession: NetworkSession {
     }
     
     func download(resumeFrom data: Data, delegate: (any URLSessionTaskDelegate)?) async throws -> (URL, URLResponse) {
+        let dummyRequest = URLRequest(url: URL(string: "https://mock.resume")!)
+        try await triggerDelegateCallbacks(for: dummyRequest, delegate: delegate)
         try await applyDelayIfNeeded()
-        
+
         guard let resumeStub else { throw URLError(.badServerResponse) }
         
         let (data, response) = try await resumeStub(data)
@@ -85,5 +106,7 @@ actor MockSession: NetworkSession {
         guard let delay else { return }
 
         try await Task.sleep(for: .seconds(delay))
+        
+        if activeTask?.state == .suspended { throw URLError(.cancelled) }
     }
 }
