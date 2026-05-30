@@ -15,17 +15,16 @@ struct NetworkTests {
     func requestSuccess() async throws {
         let mockBody = ResponseMock(id: "123", value: 1000)
         let expectedData = try JSONEncoder().encode(mockBody)
-        let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
-            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
-            return (expectedData, response)
-        }
                 
         let api = ServicePayload(method: .get,
                                  host: "https://base-url.com",
                                  path: "/ok",
                                  headers: ContentType.json().header)
 
-        // Inyectas el mock encapsulado
+        let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (expectedData, response)
+        }
         let networkClient = NetworkClient(session: MockSession(responseStub))
         let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
 
@@ -155,6 +154,31 @@ struct NetworkTests {
         try? FileManager.default.removeItem(at: response)
     }
     
+    @Test
+    func downloadResumeSuccess() async throws {
+        let expectedDownloadedData = "Downloaded file content".data(using: .utf8)!
+        let resumeData = "{ resume: true }".data(using: .utf8)!
+
+        let api = ServicePayload(method: .get,
+                                 host: "https://base-url.com",
+                                 path: "/download",
+                                 headers: [:])
+
+        let resumeStub: (@Sendable (Data) async throws -> (Data, URLResponse))? = { data in
+            let response = HTTPURLResponse(url: URL(string: "https://base-url.com")!, statusCode: 201, httpVersion: nil, headerFields: nil)!
+            #expect(data == resumeData)
+            return (expectedDownloadedData, response)
+        }
+        let networkClient = NetworkClient(session: MockSession(nil, resumeStub))
+        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+
+        let response: URL = try await service.download(resumeFrom: resumeData)
+        let dataFromFile = try Data(contentsOf: response)
+        #expect(dataFromFile == expectedDownloadedData)
+
+        try? FileManager.default.removeItem(at: response)
+    }
+
     @Test
     func requestOnlineMock() async throws {
         struct TestService: ServiceProtocol {

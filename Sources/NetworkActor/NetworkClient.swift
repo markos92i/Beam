@@ -77,9 +77,9 @@ public actor NetworkClient: NetworkProtocol {
                 logger.debug("[\(request.httpMethod ?? "")] \(request.url?.absoluteString ?? "")")
                 logger.debug("[RESPONSE]: \(httpResponse.statusCode)")
                 if let data = value as? Data {
-                    logger.debug("[RESPONSE BODY]:\n\(JSONHelper.prettyString(from: data) ?? "Formato inválido")")
+                    logger.debug("[RESPONSE BODY]:\n\(JSONHelper.prettyString(from: data) ?? "Invalid format")")
                 } else if let url = value as? URL {
-                    logger.debug("[RESPONSE FILE]: Archivo descargado en \(url.path)")
+                    logger.debug("[RESPONSE FILE]: \(url.path)")
                 }
                 return (value, httpResponse)
             } onCancel: {
@@ -130,14 +130,14 @@ public actor NetworkClient: NetworkProtocol {
         let (result, response) = try await execute(for: request) { delegate in
             try await session.download(for: request, delegate: delegate)
         }
-        return (result, response.mimeType ?? "application/octet-stream")
+        return (result, response.mimeType ?? ContentType.data.value)
     }
     
     public func download(for request: URLRequest, resumeFrom data: Data) async throws(NetworkError) -> (url: URL, contentType: String) {
         let (result, response) = try await execute(for: request) { delegate in
             return try await session.download(resumeFrom: data, delegate: delegate)
         }
-        return (result, response.mimeType ?? "application/octet-stream")
+        return (result, response.mimeType ?? ContentType.data.value)
     }
 }
 
