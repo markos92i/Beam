@@ -83,7 +83,7 @@ public actor NetworkClient: NetworkProtocol {
                 }
                 return (value, httpResponse)
             } onCancel: {
-                Task { [weak self] in await self?.onTaskCompleted() }
+                Task { [weak self] in await self?.onTaskCancelled() }
             }
         } catch let error as URLError {
             logger.error("URLError: \(error.code.rawValue) - \(error.localizedDescription)")
@@ -164,6 +164,11 @@ extension NetworkClient {
         progressContinuation.yield(task.progress)
     }
     
+    private func onTaskCancelled() {
+        task?.cancel()
+        task = nil
+    }
+
     private func onTaskCompleted() {
         task = nil
     }

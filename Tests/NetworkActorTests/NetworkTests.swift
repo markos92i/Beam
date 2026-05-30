@@ -26,7 +26,7 @@ struct NetworkTests {
             return (expectedData, response)
         }
         let networkClient = NetworkClient(session: MockSession(responseStub))
-        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
 
         let result: ResponseMock = try await service.request()
         #expect(result.id == mockBody.id)
@@ -45,7 +45,7 @@ struct NetworkTests {
             return (Data(), response)
         }
         let networkClient = NetworkClient(session: MockSession(responseStub))
-        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
 
         do {
             let _: ResponseMock = try await service.request()
@@ -71,7 +71,7 @@ struct NetworkTests {
             return (expectedData, response)
         }
         let networkClient = NetworkClient(session: MockSession(responseStub))
-        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
 
         let result: ResponseMock = try await service.upload()
         #expect(result.id == mockBody.id)
@@ -94,7 +94,7 @@ struct NetworkTests {
             return (expectedData, response)
         }
         let networkClient = NetworkClient(session: MockSession(responseStub, delay: 2))
-        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
         
         do {
             Task {
@@ -106,6 +106,39 @@ struct NetworkTests {
             #expect(Bool(false))
         } catch {
             #expect(error == .cancelled)
+        }
+    }
+    
+    @Test
+    func uploadTaskCancel() async throws {
+        let mockBody = ResponseMock(id: "upload-id", value: 1000)
+        let expectedData = try JSONEncoder().encode(mockBody)
+                
+        let api = ServicePayload(method: .get,
+                                 host: "https://base-url.com",
+                                 path: "/upload",
+                                 headers: [:],
+                                 body: .data("Dummy file content".data(using: .utf8)!))
+
+        let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
+            return (expectedData, response)
+        }
+        let networkClient = NetworkClient(session: MockSession(responseStub, delay: 2))
+        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
+        
+        do {
+            let job = Task { try await service.upload() }
+
+            Task {
+                try await Task.sleep(for: .seconds(0.5))
+                job.cancel()
+            }
+            
+            let _ = try await job.value
+            #expect(Bool(false))
+        } catch {
+            #expect(error is ServiceError<Void>)
         }
     }
 
@@ -129,7 +162,7 @@ struct NetworkTests {
             return (data, response)
         }
         let networkClient = NetworkClient(session: MockSession(responseStub))
-        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
 
         let result: ResponseMock = try await service.upload(url: temporaryURL)
         #expect(result.id == mockBody.id)
@@ -155,7 +188,7 @@ struct NetworkTests {
             return (expectedData, response)
         }
         let networkClient = NetworkClient(session: MockSession(nil, resumeStub))
-        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
 
         let result: ResponseMock = try await service.upload(resumeFrom: resumeData)
         #expect(result.id == expectedResponse.id)
@@ -176,7 +209,7 @@ struct NetworkTests {
             return (expectedDownloadedData, response)
         }
         let networkClient = NetworkClient(session: MockSession(responseStub))
-        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
 
         let response: URL = try await service.download()
         let dataFromFile = try Data(contentsOf: response)
@@ -199,7 +232,7 @@ struct NetworkTests {
             return (expectedDownloadedData, response)
         }
         let networkClient = NetworkClient(session: MockSession(responseStub, delay: 2))
-        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
 
         do {
             Task {
@@ -216,6 +249,38 @@ struct NetworkTests {
     }
     
     @Test
+    func downloadTaskCancel() async throws {
+        let expectedDownloadedData = "Downloaded file content".data(using: .utf8)!
+                
+        let api = ServicePayload(method: .get,
+                                 host: "https://base-url.com",
+                                 path: "/download",
+                                 headers: [:])
+
+        let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (expectedDownloadedData, response)
+        }
+        let networkClient = NetworkClient(session: MockSession(responseStub, delay: 2))
+        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
+
+        do {
+            let job = Task { try await service.download() }
+
+            Task {
+                try await Task.sleep(for: .seconds(0.5))
+                job.cancel()
+            }
+            
+            let response = try await job.value
+            #expect(Bool(false))
+            try? FileManager.default.removeItem(at: response)
+        } catch {
+            #expect(error is ServiceError<Void>)
+        }
+    }
+
+    @Test
     func downloadResumeSuccess() async throws {
         let expectedDownloadedData = "Downloaded file content".data(using: .utf8)!
         let resumeData = "{ resume: true }".data(using: .utf8)!
@@ -231,7 +296,7 @@ struct NetworkTests {
             return (expectedDownloadedData, response)
         }
         let networkClient = NetworkClient(session: MockSession(nil, resumeStub))
-        let service = Service<ResponseMock, ServiceError<Void>>(network: networkClient, api: api)
+        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
 
         let response: URL = try await service.download(resumeFrom: resumeData)
         let dataFromFile = try Data(contentsOf: response)
