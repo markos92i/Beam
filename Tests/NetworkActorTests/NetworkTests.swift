@@ -362,6 +362,41 @@ struct NetworkTests {
             #expect(error == .cancelled)
         }
     }
+    
+    @Test
+    func requestOnlineTaskCancel() async throws {
+        struct TestService: ServiceProtocol {
+            var service: Service<ResponseOnlineMock, Void>
+            
+            init() {
+                let payload = ServicePayload(method: .get,
+                                             host: "https://jsonplaceholder.typicode.com",
+                                             path: "/todos/1",
+                                             headers: ContentType.json().header)
+                
+                self.service = .init(network: .init(),
+                                     auth: nil,
+                                     crash: nil,
+                                     api: payload)
+            }
+        }
+        
+        do {
+            let service = TestService()
+
+            let job = Task { try await service.request() }
+
+            Task {
+                try await Task.sleep(for: .seconds(0.05))
+                job.cancel()
+            }
+            
+            let _: ResponseOnlineMock = try await job.value
+            #expect(Bool(false))
+        } catch {
+            #expect(error is ServiceError<Void>)
+        }
+    }
 }
 
 private struct ResponseMock: Codable, Equatable {

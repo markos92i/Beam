@@ -141,6 +141,7 @@ public actor NetworkClient: NetworkProtocol {
     }
 }
 
+// MARK: User initiated cancel
 extension NetworkClient {
     public func cancel() async -> Data? {
         defer { task = nil }
