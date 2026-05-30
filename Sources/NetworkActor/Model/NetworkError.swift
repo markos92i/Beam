@@ -31,10 +31,6 @@ public enum NetworkError: Error {
     public var status: HTTPStatus {
         if case .http(let status, _) = self { status } else { .undefined }
     }
-
-    var statusCode: Int {
-        if case .http(let code, _) = self { code.rawValue } else { -1000 }
-    }
     
     var body: Data? {
         if case .http(_, let body) = self { body } else { nil }

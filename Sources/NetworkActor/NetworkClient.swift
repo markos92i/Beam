@@ -47,12 +47,12 @@ public actor NetworkClient: NetworkProtocol {
         for request: URLRequest,
         operation: (URLSessionTaskDelegate) async throws -> (T, URLResponse)
     ) async throws(NetworkError) -> (T, HTTPURLResponse) {
-        logger.debug("[\(request.httpMethod ?? "")] \(request.url?.absoluteString ?? "")")
-        if let body = request.httpBody, !body.isEmpty {
-            logger.debug("[REQUEST]: \(String(data: body, encoding: .utf8) ?? "")")
-        }
-        
         do {
+            logger.debug("[\(request.httpMethod ?? "")] \(request.url?.absoluteString ?? "")")
+            if let body = request.httpBody, !body.isEmpty {
+                logger.debug("[REQUEST]: \(String(data: body, encoding: .utf8) ?? "")")
+            }
+
             return try await withTaskCancellationHandler {
                 defer { onTaskCompleted() }
                 
@@ -89,7 +89,7 @@ public actor NetworkClient: NetworkProtocol {
             logger.error("URLError: \(error.code.rawValue) - \(error.localizedDescription)")
             throw NetworkError.url(error)
         } catch let error as NetworkError {
-            logger.error("NetworkError: \(error.statusCode) - \(error.localizedDescription)")
+            logger.error("NetworkError: \(error.status.rawValue) - \(error.localizedDescription)")
             throw error
         } catch {
             logger.error("UnknownError: \(error.localizedDescription)")
