@@ -7,7 +7,9 @@
 
 
 import Foundation
-import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 public struct Serializer: Sendable {
     private let encoder: JSONEncoder
@@ -53,8 +55,10 @@ public struct Serializer: Sendable {
             } catch {
                 throw error
             }
+#if canImport(UIKit)
         case is UIImage.Type:
             return UIImage(data: data) as? Value
+#endif
         case is Void.Type:
             return () as? Value
         default:

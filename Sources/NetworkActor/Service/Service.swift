@@ -132,6 +132,19 @@ public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
 
 extension Service {
     // MARK: - Private Helpers
+    private var defaultAcceptHeader: [String: String]? {
+        switch Success.self {
+        case is Data.Type: ["Accept": "application/octet-stream"]
+        case is String.Type, is Bool.Type: ["Accept": "text/plain; charset=utf-8"]
+        case is Void.Type: ["Accept": "*/*"]
+        #if canImport(UIKit)
+        case is UIImage.Type: ["Accept": "image/*"]
+        #endif
+        case is Codable.Type: ["Accept": "application/json"]
+        default: nil
+        }
+    }
+
     private var request: URLRequest {
         get async throws {
             guard let base = URL(string: api.host),
@@ -150,11 +163,17 @@ extension Service {
             
             var request = URLRequest(url: url)
             request.httpMethod = api.method.rawValue
-            if let auth {
-                request.allHTTPHeaderFields = api.allHeaders.merging(try await auth.authHeader) { $1 }
-            } else {
-                request.allHTTPHeaderFields = api.allHeaders
+
+            var headers = api.allHeaders
+            if let defaultAcceptHeader, headers["Accept"] == nil {
+                headers.merge(defaultAcceptHeader) { current, _ in current }
             }
+
+            if let auth {
+                headers = headers.merging(try await auth.authHeader) { _, new in new }
+            }
+
+            request.allHTTPHeaderFields = headers
             request.httpBody = try api.data(with: serializer)
             request.timeoutInterval = api.timeout
             
