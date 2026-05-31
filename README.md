@@ -1,175 +1,112 @@
-🌀 NetworkActor
-NetworkActor es una librería ligera y robusta para Swift diseñada para gestionar peticiones de red de forma asíncrona y segura. Aprovecha el poder de los Swift Actors para garantizar que la configuración de red y la gestión de estados estén libres de data races.
+# Declarative Network Layer (DSL HTTP Client)
 
-✨ Características
-Thread-Safe por diseño: Construido sobre el modelo de actor de Swift.
+This module implements the core network communication engine for the application. It has been built using a **declarative, value-oriented (`struct`) approach** powered by Swift's `resultBuilders`. 
 
-Async/Await: Olvídate de los cierres (closures) y el "callback hell".
+The system guarantees type safety, strict dependency inversion, complete isolation against global naming collisions, and compile-time validation rules.
 
-Genéricos inteligentes: Decodificación automática de JSON a modelos Codable.
+---
 
-Cero dependencias: Utiliza URLSession puro, manteniendo tu proyecto ligero.
+## 🎯 Architecture Pillars
 
-Concurrencia estricta: 100% compatible y testada con concurrencia estricta con proyecto en producción.
+### 1. Compile-Time Validation (Zero Runtime Routing Errors)
+The DSL utilizes static type constraints. The `DSLBuilder` enforces by signature that the very first element of the declarative block must be an HTTP method (`NetworkDSL.Method`). If a developer attempts to construct a request and forgets the verb (`Get`, `Post`, etc.), **Xcode will stop compilation in real time**, preventing human errors from reaching production.
 
-🚀 Instalación
-Swift Package Manager (SPM)
-Añade la siguiente URL a tus dependencias de Xcode:
-git@github.com:markos92i/NetworkActor.git
+### 2. Robust Data Mapping (Mapper)
+The transformation of raw network bytes into domain models is managed via the **`Mapper`** component (aligned with industry standards found in major frameworks like Alamofire or Moya). The underlying `Serializer` has been hardened by removing optional returns: it guarantees a strongly-typed result or explicitly throws `.unsupported` or `.incorrect` exceptions (the latter when physical bytes do not match the inferred generic type).
 
-🛠️ Uso Básico
-1. Definir tu Modelo
-Asegúrate de que tu modelo implemente Codable.
-Tambien puedes enviar Data puro, y usar multipart/form
+---
 
-Swift
-```
-struct User: Codable {
-    let id: Int
-    let name: String
-}
-```
-2. Realizar una Petición
-Gracias a NetworkActor, puedes realizar peticiones de forma segura desde cualquier lugar de tu app.
+## 🧬 Data Flow Architecture
 
-Swift
-```
-struct TestService: ServiceProtocol {
-    var service: ServiceManager
+When `.build()` is invoked on a `RequestBuilder`, the immutable configuration tree is processed through the following hierarchy:
 
-    init(id: Int, body: MyModel?) {
-        self.service = .init(network: .init(certificates: APIConstants.certificates),
-                             auth: AuthManager.shared,
-                             crash: CrashManager.shared,
-                             api: .init(method: .post,
-                                        baseURL: URLs.api,
-                                        path: "/yourPath/\(id)",
-                                        headers: APIConstants.headers.merging(ContentType.json().header) { $1 },
-                                        body: body))
-    }
-    
-    func request() async -> Result<Bool, ServiceError<MyErrorModel>> {
-        await service.request()
-    }
-}
-```
+---
 
-🏗️ Arquitectura Recomendada
-Para evitar bloqueos en el hilo de UI (como mencionamos anteriormente), NetworkActor separa la lógica de red del ciclo de vida de la vista.
+## 🛠️ DSL Components Reference
 
-Ejemplo con SwiftUI
-Swift
-```
-struct ProfileView: View {
-    @State private var user: User?
-    private let api = NetworkActor()
-    @State private var progress: Progress?
+### HTTP Methods (Mandatory on the first line)
+* `Get(host:path:)`, `Post(host:path:)`, `Put(host:path:)`, `Delete(host:path:)`, `Patch(host:path:)`, `Head(host:path:)`, `Options(host:path:)`, `Connect(host:path:)`, `Trace(host:path:)`.
 
-    var body: some View {
-        VStack {
-            if let user {
-                Text("Hola, \(user.name)")
-            } else {
-                ProgressView(progress) // Feedback visual inmediato
-            }
-        }
-        .task {
-            let service = TestService(id: 1, body: MyModel())
-            for await p in service.progress.prefix(1) { progress = p }
+### Request Modifiers
+* `Header(_ key: String, value: String)`: Appends an individual key-value header.
+* `Header(_ dictionary: [String: String])`: Dynamically merges an entire dictionary of base configurations (e.g., `APIConstants.headers`).
+* `Query(_ name: String, value: String?)`: Sequentially appends a `URLQueryItem`.
+* `Body`: Syntax namespace to attach request payloads via `Body.json(Sendable)`, `Body.data(Data)`, or `Body.multipart(MultipartForm)`.
+* `Timeout(_ interval: TimeInterval)`: Sets the maximum request execution time (defaults to 60 seconds).
 
-            switch await service.request() {
-            case .success(let result):
-                self.user = result
-            case .failure(let result):
-            }
-        }
+### Infrastructure & Injection Components
+* `Use(any NetworkProtocol)`: Overrides the default network client (ideal for injecting `SSL Pinning` certificates or custom `MockSession` environments).
+* `Config(ServiceConfig)`: Injects service policies and configurations.
+* `Mapper(Serializer)`: Attaches a serializer with custom encoding/decoding strategies (e.g., Unix timestamps or *snake_case* keys).
+* `Auth(any AuthProtocol)`: Injects the session/authentication token manager.
+* `Crash(any CrashProtocol)`: Injects the analytical crash and error reporter.
+
+---
+
+## 🚀 Usage Guide
+
+### 1. Standard Service Implementation
+
+Endpoints can be encapsulated into structures conforming to `ServiceProtocol`. This isolates networking logic completely from the Presentation Layer.
+
+```swift
+import Foundation
+
+struct DeleteService: ServiceProtocol {
+    var service: Service<Void, ErrorDto>
+
+    init(id: String) {
+        self.service = RequestBuilder {
+            // 1. HTTP Method MUST be on the first line (Real-time compilation validation)
+            Delete(URLs.api, "/users/\(id)")
+            
+            // 2. Merged headers (Accepts full dictionaries)
+            Header([["Header1": "Value1"], ["Header2": "Value1"]])
+            Header("X-Device-Client", value: "iOS")
+            
+            // 3. Network infrastructure with custom SSL Pinning certificates
+            Use(NetworkClient(certificates: [CertificateData]))
+            
+            // 4. Configuration & Timeouts
+            Config(.standard)
+            Timeout(30)
+            
+            // 5. Architectural dependency injection
+            Auth(AuthManager.shared)
+            Crash(CrashManager.shared)
+        }.build()
     }
 }
 ```
 
-Ejemplo de AuthManager
+Additionally you can simply declare a service wherever you want using the RequestBuilder or initializating a Service struct manually.
 
-Swift
-```
-actor AuthManager: AuthProtocol {
-    static let shared = AuthManager()
+```swift
+final class ProfileViewModel: ObservableObject {
+    var service: Service<MetricsDto, ErrorDto>
     
-    private var currentToken: Token?
-    private var refreshTask: Task<Token, Error>?
+    init(documentId: String) {
+        self.deleteService = DeleteAccreditationsService(id: documentId)
+    }
     
-    var hasToken: Bool { currentToken != nil }
-    
-    var authHeader: [String: String] { get async throws { ["Authorization": "Bearer \(try await token.id)"] } }
-    
-    var token: Token {
-        get async throws {
-            if let refreshTask { return try await refreshTask.value }
-            
-            guard let currentToken else { throw AuthError.missingToken }
-            
-            if currentToken.isValid { return currentToken }
-            
-            return try await refreshToken()
+    func deleteDocument() async {
+        do {
+            self.service = RequestBuilder<MetricsDto, ErrorDto> {
+                Get(URLs.api, "/metrics/legacy")
+                Header(APIConstants.headers)
+                
+                // Declaratively overrides the standard parser for this instance
+                Mapper(legacySerializer)
+                
+                Auth(AuthManager.shared)
+            }.build()
+
+            try await deleteService.service.request()
+            print("Operation completed successfully.")
+        } catch {
+            // Any network anomalies or mapping errors (SerializerError.incorrect) are captured here
+            print("Structured error received: \(error)")
         }
     }
-
-    private func refreshToken() async throws -> Token {
-        if let refreshTask { return try await refreshTask.value }
-
-        let task = Task { () throws -> Token in
-            defer { refreshTask = nil }
-            
-            switch await TokenRefreshService.request() {
-            case .success(let result):
-                let newToken = Token(id: result.accessToken, date: .now, expiration: result.expiration)
-                currentToken = newToken
-                return newToken
-            case .failure(let error):
-                if error.type == .unauthorized || error.type == .badRequest {
-                    _ = await LogoutService().request()
-                    await self.clear() // Limpiar al detectar credenciales inválidas
-                    throw AuthError.invalidCredentials
-                }
-                throw AuthError.failedToRefreshToken
-            }
-        }
-
-        refreshTask = task
-
-        return try await task.value
-    }
-    
-    func restore(token: Token) async {
-        currentToken = token
-        refreshTask?.cancel()
-        refreshTask = nil
-    }
-    
-    func clear() async {
-        currentToken = nil
-        refreshTask?.cancel()
-        refreshTask = nil
-    }
 }
 ```
-
-Ejemplo de CrashManager
-Swift
-```
-struct CrashManager: CrashProtocol {
-    static let shared = CrashManager()
-    
-    func report(error: Error, userInfo: [String: Any] = [:]) {
-        let commonInfo: [String: Any] = ["UserID": Defs.shared.userID].merging(userInfo) { (a, _) in a }
-        Crashlytics.crashlytics().record(error: error, userInfo: commonInfo)
-        print("[REPORT] CrashManager: \(error.localizedDescription)\nDetails: \(userInfo)")
-    }
-}
-```
-
-⚠️ ¿Por qué un Actor?
-A diferencia de una clase convencional, un actor en Swift:
-
-Aísla el estado: Evita que múltiples hilos modifiquen la configuración de red (tokens, headers) al mismo tiempo.
-
-Optimiza recursos: Gestiona las peticiones de forma eficiente bajo el nuevo modelo de concurrencia de hilos de Apple.
