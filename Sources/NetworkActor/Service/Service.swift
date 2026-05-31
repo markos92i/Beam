@@ -10,17 +10,19 @@ import SwiftUI
 public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
     public var id = UUID().uuidString
     
-    public var network: NetworkClient
+    public var network: any ClientProtocol
     public var auth: (any AuthProtocol)? = nil
-    public var crash: CrashProtocol? = nil
+    public var crash: (any CrashProtocol)? = nil
     public let serializer: Serializer
     public var config: ServiceConfig
     public var api: ServicePayload
     
+    public var progress: AsyncStream<Progress> { network.progress }
+
     public init(
-        network: NetworkClient,
+        network: any ClientProtocol = NetworkClient(session: URLSession.shared),
         auth: (any AuthProtocol)? = nil,
-        crash: CrashProtocol? = nil,
+        crash: (any CrashProtocol)? = nil,
         serializer: Serializer = .init(),
         config: ServiceConfig = .standard,
         api: ServicePayload

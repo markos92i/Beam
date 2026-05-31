@@ -26,7 +26,7 @@ public protocol ServiceProtocol: Identifiable, Sendable {
 
 extension ServiceProtocol {
     public var id: String { service.id }
-    public var progress: AsyncStream<Progress> { service.network.progress }
+    public var progress: AsyncStream<Progress> { service.progress }
     
     public func request() async throws(ServiceError<Failure>) -> Success {
         try await service.request()

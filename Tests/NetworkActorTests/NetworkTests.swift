@@ -16,17 +16,15 @@ struct NetworkTests {
         let mockBody = ResponseMock(id: "123", value: 1000)
         let expectedData = try JSONEncoder().encode(mockBody)
                 
-        let api = ServicePayload(method: .get,
-                                 host: "https://base-url.com",
-                                 path: "/ok",
-                                 headers: ContentType.json().header)
-
         let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (expectedData, response)
         }
         let networkClient = NetworkClient(session: MockSession(responseStub))
-        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
+        let service: Service<ResponseMock, Void> = RequestBuilder {
+            Get("https://base-url.com", "/ok")
+            Use(networkClient)
+        }.build()
 
         let result: ResponseMock = try await service.request()
         #expect(result.id == mockBody.id)
@@ -35,17 +33,15 @@ struct NetworkTests {
     
     @Test
     func requestFailure() async throws {
-        let api = ServicePayload(method: .get,
-                                 host: "https://base-url.com",
-                                 path: "/error",
-                                 headers: ContentType.json().header)
-
         let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
             return (Data(), response)
         }
         let networkClient = NetworkClient(session: MockSession(responseStub))
-        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
+        let service: Service<ResponseMock, Void> = RequestBuilder {
+            Get("https://base-url.com", "/error")
+            Use(networkClient)
+        }.build()
 
         do {
             let _: ResponseMock = try await service.request()
@@ -60,18 +56,16 @@ struct NetworkTests {
         let mockBody = ResponseMock(id: "upload-id", value: 1000)
         let expectedData = try JSONEncoder().encode(mockBody)
                 
-        let api = ServicePayload(method: .get,
-                                 host: "https://base-url.com",
-                                 path: "/upload",
-                                 headers: [:],
-                                 body: .data("Dummy file content".data(using: .utf8)!))
-
         let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             return (expectedData, response)
         }
         let networkClient = NetworkClient(session: MockSession(responseStub))
-        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
+        let service: Service<ResponseMock, Void> = RequestBuilder {
+            Get("https://base-url.com", "/upload")
+            Body(.data("Dummy file content".data(using: .utf8)!))
+            Use(networkClient)
+        }.build()
 
         let result: ResponseMock = try await service.upload()
         #expect(result.id == mockBody.id)
@@ -83,18 +77,16 @@ struct NetworkTests {
         let mockBody = ResponseMock(id: "upload-id", value: 1000)
         let expectedData = try JSONEncoder().encode(mockBody)
                 
-        let api = ServicePayload(method: .get,
-                                 host: "https://base-url.com",
-                                 path: "/upload",
-                                 headers: [:],
-                                 body: .data("Dummy file content".data(using: .utf8)!))
-
         let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             return (expectedData, response)
         }
         let networkClient = NetworkClient(session: MockSession(responseStub, delay: 2))
-        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
+        let service: Service<ResponseMock, Void> = RequestBuilder {
+            Get("https://base-url.com", "/upload")
+            Body(.data("Dummy file content".data(using: .utf8)!))
+            Use(networkClient)
+        }.build()
         
         do {
             Task {
@@ -114,18 +106,16 @@ struct NetworkTests {
         let mockBody = ResponseMock(id: "upload-id", value: 1000)
         let expectedData = try JSONEncoder().encode(mockBody)
                 
-        let api = ServicePayload(method: .get,
-                                 host: "https://base-url.com",
-                                 path: "/upload",
-                                 headers: [:],
-                                 body: .data("Dummy file content".data(using: .utf8)!))
-
         let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             return (expectedData, response)
         }
         let networkClient = NetworkClient(session: MockSession(responseStub, delay: 2))
-        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
+        let service: Service<ResponseMock, Void> = RequestBuilder {
+            Get("https://base-url.com", "/upload")
+            Body(.data("Dummy file content".data(using: .utf8)!))
+            Use(networkClient)
+        }.build()
         
         do {
             let job = Task { try await service.upload() }
@@ -150,19 +140,17 @@ struct NetworkTests {
         try expectedData.write(to: temporaryURL)
         defer { try? FileManager.default.removeItem(at: temporaryURL) }
                 
-        let api = ServicePayload(method: .get,
-                                 host: "https://base-url.com",
-                                 path: "/upload",
-                                 headers: [:],
-                                 body: .data("Dummy file content".data(using: .utf8)!))
-        
         let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             let data = try Data(contentsOf: temporaryURL)
             return (data, response)
         }
         let networkClient = NetworkClient(session: MockSession(responseStub))
-        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
+        let service: Service<ResponseMock, Void> = RequestBuilder {
+            Get("https://base-url.com", "/upload")
+            Body(.data("Dummy file content".data(using: .utf8)!))
+            Use(networkClient)
+        }.build()
 
         let result: ResponseMock = try await service.upload(url: temporaryURL)
         #expect(result.id == mockBody.id)
@@ -176,19 +164,17 @@ struct NetworkTests {
 
         let resumeData = "{ resume: true }".data(using: .utf8)!
         
-        let api = ServicePayload(method: .put,
-                                 host: "https://base-url.com",
-                                 path: "/upload",
-                                 headers: [:],
-                                 body: .data("Dummy file content".data(using: .utf8)!))
-
         let resumeStub: (@Sendable (Data) async throws -> (Data, URLResponse))? = { data in
             let response = HTTPURLResponse(url: URL(string: "https://base-url.com")!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             #expect(data == resumeData)
             return (expectedData, response)
         }
         let networkClient = NetworkClient(session: MockSession(nil, resumeStub))
-        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
+        let service: Service<ResponseMock, Void> = RequestBuilder {
+            Put("https://base-url.com", "/upload")
+            Body(.data("Dummy file content".data(using: .utf8)!))
+            Use(networkClient)
+        }.build()
 
         let result: ResponseMock = try await service.upload(resumeFrom: resumeData)
         #expect(result.id == expectedResponse.id)
@@ -199,17 +185,15 @@ struct NetworkTests {
     func downloadSuccess() async throws {
         let expectedDownloadedData = "Downloaded file content".data(using: .utf8)!
                 
-        let api = ServicePayload(method: .get,
-                                 host: "https://base-url.com",
-                                 path: "/download",
-                                 headers: [:])
-
         let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (expectedDownloadedData, response)
         }
         let networkClient = NetworkClient(session: MockSession(responseStub))
-        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
+        let service: Service<ResponseMock, Void> = RequestBuilder {
+            Get("https://base-url.com", "/download")
+            Use(networkClient)
+        }.build()
 
         let response: URL = try await service.download()
         let dataFromFile = try Data(contentsOf: response)
@@ -222,17 +206,15 @@ struct NetworkTests {
     func downloadCancel() async throws {
         let expectedDownloadedData = "Downloaded file content".data(using: .utf8)!
                 
-        let api = ServicePayload(method: .get,
-                                 host: "https://base-url.com",
-                                 path: "/download",
-                                 headers: [:])
-
         let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (expectedDownloadedData, response)
         }
         let networkClient = NetworkClient(session: MockSession(responseStub, delay: 2))
-        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
+        let service: Service<ResponseMock, Void> = RequestBuilder {
+            Get("https://base-url.com", "/download")
+            Use(networkClient)
+        }.build()
 
         do {
             Task {
@@ -252,17 +234,15 @@ struct NetworkTests {
     func downloadTaskCancel() async throws {
         let expectedDownloadedData = "Downloaded file content".data(using: .utf8)!
                 
-        let api = ServicePayload(method: .get,
-                                 host: "https://base-url.com",
-                                 path: "/download",
-                                 headers: [:])
-
         let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (expectedDownloadedData, response)
         }
         let networkClient = NetworkClient(session: MockSession(responseStub, delay: 2))
-        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
+        let service: Service<ResponseMock, Void> = RequestBuilder {
+            Get("https://base-url.com", "/download")
+            Use(networkClient)
+        }.build()
 
         do {
             let job = Task { try await service.download() }
@@ -285,18 +265,16 @@ struct NetworkTests {
         let expectedDownloadedData = "Downloaded file content".data(using: .utf8)!
         let resumeData = "{ resume: true }".data(using: .utf8)!
 
-        let api = ServicePayload(method: .get,
-                                 host: "https://base-url.com",
-                                 path: "/download",
-                                 headers: [:])
-
         let resumeStub: (@Sendable (Data) async throws -> (Data, URLResponse))? = { data in
             let response = HTTPURLResponse(url: URL(string: "https://base-url.com")!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             #expect(data == resumeData)
             return (expectedDownloadedData, response)
         }
         let networkClient = NetworkClient(session: MockSession(nil, resumeStub))
-        let service = Service<ResponseMock, Void>(network: networkClient, api: api)
+        let service: Service<ResponseMock, Void> = RequestBuilder {
+            Get("https://base-url.com", "/download")
+            Use(networkClient)
+        }.build()
 
         let response: URL = try await service.download(resumeFrom: resumeData)
         let dataFromFile = try Data(contentsOf: response)
@@ -311,15 +289,9 @@ struct NetworkTests {
             var service: Service<ResponseOnlineMock, Void>
             
             init() {
-                let payload = ServicePayload(method: .get,
-                                             host: "https://jsonplaceholder.typicode.com",
-                                             path: "/todos/1",
-                                             headers: ContentType.json().header)
-                
-                self.service = .init(network: .init(),
-                                     auth: nil,
-                                     crash: nil,
-                                     api: payload)
+                self.service = RequestBuilder {
+                    Get("https://jsonplaceholder.typicode.com", "/todos/1")
+                }.build()
             }
         }
         
@@ -338,15 +310,9 @@ struct NetworkTests {
             var service: Service<ResponseOnlineMock, Void>
             
             init() {
-                let payload = ServicePayload(method: .get,
-                                             host: "https://jsonplaceholder.typicode.com",
-                                             path: "/todos/1",
-                                             headers: ContentType.json().header)
-                
-                self.service = .init(network: .init(),
-                                     auth: nil,
-                                     crash: nil,
-                                     api: payload)
+                self.service = RequestBuilder {
+                    Get("https://jsonplaceholder.typicode.com", "/todos/1")
+                }.build()
             }
         }
         
@@ -365,25 +331,12 @@ struct NetworkTests {
     
     @Test
     func requestOnlineTaskCancel() async throws {
-        struct TestService: ServiceProtocol {
-            var service: Service<ResponseOnlineMock, Void>
-            
-            init() {
-                let payload = ServicePayload(method: .get,
-                                             host: "https://jsonplaceholder.typicode.com",
-                                             path: "/todos/1",
-                                             headers: ContentType.json().header)
-                
-                self.service = .init(network: .init(),
-                                     auth: nil,
-                                     crash: nil,
-                                     api: payload)
-            }
-        }
+        let service: Service<ResponseOnlineMock, Void> = RequestBuilder {
+            Get("https://base-url.com", "/download")
+            Use(NetworkClient(session: URLSession.shared))
+        }.build()
         
         do {
-            let service = TestService()
-
             let job = Task { try await service.request() }
 
             Task {
@@ -410,4 +363,5 @@ private struct ResponseOnlineMock: Codable, Equatable {
     let title: String
     let completed: Bool
 }
+
 

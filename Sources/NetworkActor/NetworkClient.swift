@@ -8,8 +8,10 @@
 import Foundation
 
 // MARK: - Protocol Definition
-protocol NetworkProtocol: Actor {
+public protocol ClientProtocol: Sendable {
+    func data(for: URLRequest) async throws(NetworkError) -> Data
     func upload(for: URLRequest, data: Data) async throws(NetworkError) -> Data
+    func upload(for request: URLRequest, url: URL) async throws(NetworkError) -> Data
     func upload(for request: URLRequest, resumeFrom data: Data) async throws(NetworkError) -> Data
     func download(for: URLRequest) async throws(NetworkError) -> (url: URL, contentType: String)
     func download(for request: URLRequest, resumeFrom data: Data) async throws(NetworkError) -> (url: URL, contentType: String)
@@ -18,7 +20,7 @@ protocol NetworkProtocol: Actor {
     var progress: AsyncStream<Progress> { get }
 }
 
-public actor NetworkClient: NetworkProtocol {
+public actor NetworkClient: ClientProtocol {
     private let logger: Logger = Logger()
     private let session: any NetworkSession
     private let certificates: [Data]
