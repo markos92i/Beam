@@ -8,6 +8,8 @@
 import Foundation
 
 public enum SerializerError: Error {
+    case unsuported
+    case incorrect
     case encoding(Error, info: [String: any Sendable])
     case decoding(Error, info: [String: any Sendable])
     
@@ -47,6 +49,8 @@ public enum SerializerError: Error {
 extension SerializerError {
     var info: [String: any Sendable] {
         switch self {
+        case .unsuported: ["Unsupported": "The inferred type is not supported by the serializer, try using a different one, implement your own serializer that supports it, or contact the developer to add support for this type"]
+        case .incorrect: ["Incorrect": "The inferred type does not match the type of the value"]
         case .encoding(_, info: let info): info
         case .decoding(_, info: let info): info
         }

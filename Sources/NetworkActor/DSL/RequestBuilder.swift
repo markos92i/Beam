@@ -12,34 +12,8 @@ public protocol RequestComponent {
     func apply(to builder: inout RequestBuilderState)
 }
 
-// MARK: - NAMESPACE
+// MARK: - Structs
 public enum NetworkDSL {
-    
-    public struct Use: RequestComponent {
-        let client: any ClientProtocol
-        public func apply(to builder: inout RequestBuilderState) { builder.network = client }
-    }
-
-    public struct Auth: RequestComponent {
-        let auth: any AuthProtocol
-        public func apply(to builder: inout RequestBuilderState) { builder.auth = auth }
-    }
-
-    public struct Crash: RequestComponent {
-        let crash: any CrashProtocol
-        public func apply(to builder: inout RequestBuilderState) { builder.crash = crash }
-    }
-
-    public struct WithSerializer: RequestComponent {
-        let serializer: Serializer
-        public func apply(to builder: inout RequestBuilderState) { builder.serializer = serializer }
-    }
-
-    public struct Config: RequestComponent {
-        let config: ServiceConfig
-        public func apply(to builder: inout RequestBuilderState) { builder.config = config }
-    }
-
     public struct Method: RequestComponent {
         let method: HTTPMethod
         let host: String
@@ -72,16 +46,35 @@ public enum NetworkDSL {
         let interval: TimeInterval
         public func apply(to builder: inout RequestBuilderState) { builder.timeout = interval }
     }
+    
+    public struct Use: RequestComponent {
+        let client: any ClientProtocol
+        public func apply(to builder: inout RequestBuilderState) { builder.network = client }
+    }
+
+    public struct Auth: RequestComponent {
+        let auth: any AuthProtocol
+        public func apply(to builder: inout RequestBuilderState) { builder.auth = auth }
+    }
+
+    public struct Crash: RequestComponent {
+        let crash: any CrashProtocol
+        public func apply(to builder: inout RequestBuilderState) { builder.crash = crash }
+    }
+
+    public struct WithSerializer: RequestComponent {
+        let serializer: Serializer
+        public func apply(to builder: inout RequestBuilderState) { builder.serializer = serializer }
+    }
+
+    public struct Config: RequestComponent {
+        let config: ServiceConfig
+        public func apply(to builder: inout RequestBuilderState) { builder.config = config }
+    }
 }
 
 
 // MARK: - Global Functions
-public func Use(_ client: any ClientProtocol) -> NetworkDSL.Use { .init(client: client) }
-public func Auth(_ auth: any AuthProtocol) -> NetworkDSL.Auth { .init(auth: auth) }
-public func Crash(_ crash: any CrashProtocol) -> NetworkDSL.Crash { .init(crash: crash) }
-public func WithSerializer(_ serializer: Serializer) -> NetworkDSL.WithSerializer { .init(serializer: serializer) }
-public func Config(_ config: ServiceConfig) -> NetworkDSL.Config { .init(config: config) }
-
 public func Connect(_ host: String, _ path: String) -> NetworkDSL.Method { .init(method: .connect, host: host, path: path) }
 public func Get(_ host: String, _ path: String) -> NetworkDSL.Method { .init(method: .get, host: host, path: path) }
 public func Post(_ host: String, _ path: String) -> NetworkDSL.Method { .init(method: .post, host: host, path: path) }
@@ -91,12 +84,18 @@ public func Patch(_ host: String, _ path: String) -> NetworkDSL.Method { .init(m
 public func Head(_ host: String, _ path: String) -> NetworkDSL.Method { .init(method: .head, host: host, path: path) }
 public func Options(_ host: String, _ path: String) -> NetworkDSL.Method { .init(method: .options, host: host, path: path) }
 public func Trace(_ host: String, _ path: String) -> NetworkDSL.Method { .init(method: .trace, host: host, path: path) }
-
 public func Header(_ key: String, value: String) -> NetworkDSL.Header { .init(key, value: value) }
 public func Header(_ dictionary: [String: String]) -> NetworkDSL.Header { .init(dictionary) }
 public func Query(_ name: String, value: String?) -> NetworkDSL.Query { .init(item: URLQueryItem(name: name, value: value)) }
-public func Timeout(_ interval: TimeInterval) -> NetworkDSL.Timeout { .init(interval: interval) }
 public func Body(_ body: HTTPBody) -> NetworkDSL.Body { .init(body: body) }
+public func Timeout(_ interval: TimeInterval) -> NetworkDSL.Timeout { .init(interval: interval) }
+
+public func Use(_ client: any ClientProtocol) -> NetworkDSL.Use { .init(client: client) }
+public func Auth(_ auth: any AuthProtocol) -> NetworkDSL.Auth { .init(auth: auth) }
+public func Crash(_ crash: any CrashProtocol) -> NetworkDSL.Crash { .init(crash: crash) }
+public func WithSerializer(_ serializer: Serializer) -> NetworkDSL.WithSerializer { .init(serializer: serializer) }
+public func Config(_ config: ServiceConfig) -> NetworkDSL.Config { .init(config: config) }
+
 
 // MARK: - State, Builder & Container
 public struct RequestBuilderState {
@@ -115,22 +114,32 @@ public struct RequestBuilderState {
     var timeout: TimeInterval = 60
 }
 
+public struct ValidatedRequest {
+    let method: NetworkDSL.Method
+    let modifiers: [RequestComponent]
+}
+
 @resultBuilder
 public struct DSLBuilder {
-    public static func buildBlock(_ components: RequestComponent...) -> [RequestComponent] { components }
+    public static func buildBlock(_ method: NetworkDSL.Method, _ modifiers: RequestComponent...) -> ValidatedRequest {
+        ValidatedRequest(method: method, modifiers: modifiers)
+    }
     public static func buildOptional(_ component: [RequestComponent]?) -> [RequestComponent] { component ?? [] }
 }
 
 public struct RequestBuilder<Success: Sendable, Failure: Sendable> {
-    private let components: [RequestComponent]
+    private let validatedRequest: ValidatedRequest
     
-    public init(@DSLBuilder _ builder: () -> [RequestComponent]) {
-        self.components = builder()
+    public init(@DSLBuilder _ builder: () -> ValidatedRequest) {
+        self.validatedRequest = builder()
     }
     
     public func build() -> Service<Success, Failure> {
         var state = RequestBuilderState()
-        components.forEach { $0.apply(to: &state) }
+        
+        validatedRequest.method.apply(to: &state)
+        
+        validatedRequest.modifiers.forEach { $0.apply(to: &state) }
         
         let payload = ServicePayload(
             method: state.method,

@@ -20,10 +20,9 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (expectedData, response)
         }
-        let networkClient = NetworkClient(session: MockSession(responseStub))
         let service: Service<ResponseMock, Void> = RequestBuilder {
             Get("https://base-url.com", "/ok")
-            Use(networkClient)
+            Use(NetworkClient(session: MockSession(responseStub)))
         }.build()
 
         let result: ResponseMock = try await service.request()
@@ -37,10 +36,9 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
             return (Data(), response)
         }
-        let networkClient = NetworkClient(session: MockSession(responseStub))
         let service: Service<ResponseMock, Void> = RequestBuilder {
             Get("https://base-url.com", "/error")
-            Use(networkClient)
+            Use(NetworkClient(session: MockSession(responseStub)))
         }.build()
 
         do {
@@ -60,11 +58,10 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             return (expectedData, response)
         }
-        let networkClient = NetworkClient(session: MockSession(responseStub))
         let service: Service<ResponseMock, Void> = RequestBuilder {
             Get("https://base-url.com", "/upload")
             Body(.data("Dummy file content".data(using: .utf8)!))
-            Use(networkClient)
+            Use(NetworkClient(session: MockSession(responseStub)))
         }.build()
 
         let result: ResponseMock = try await service.upload()
@@ -81,11 +78,10 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             return (expectedData, response)
         }
-        let networkClient = NetworkClient(session: MockSession(responseStub, delay: 2))
         let service: Service<ResponseMock, Void> = RequestBuilder {
             Get("https://base-url.com", "/upload")
             Body(.data("Dummy file content".data(using: .utf8)!))
-            Use(networkClient)
+            Use(NetworkClient(session: MockSession(responseStub, delay: 2)))
         }.build()
         
         do {
@@ -110,11 +106,10 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             return (expectedData, response)
         }
-        let networkClient = NetworkClient(session: MockSession(responseStub, delay: 2))
         let service: Service<ResponseMock, Void> = RequestBuilder {
             Get("https://base-url.com", "/upload")
             Body(.data("Dummy file content".data(using: .utf8)!))
-            Use(networkClient)
+            Use(NetworkClient(session: MockSession(responseStub, delay: 2)))
         }.build()
         
         do {
@@ -145,11 +140,10 @@ struct NetworkTests {
             let data = try Data(contentsOf: temporaryURL)
             return (data, response)
         }
-        let networkClient = NetworkClient(session: MockSession(responseStub))
         let service: Service<ResponseMock, Void> = RequestBuilder {
             Get("https://base-url.com", "/upload")
             Body(.data("Dummy file content".data(using: .utf8)!))
-            Use(networkClient)
+            Use(NetworkClient(session: MockSession(responseStub)))
         }.build()
 
         let result: ResponseMock = try await service.upload(url: temporaryURL)
@@ -169,11 +163,10 @@ struct NetworkTests {
             #expect(data == resumeData)
             return (expectedData, response)
         }
-        let networkClient = NetworkClient(session: MockSession(nil, resumeStub))
         let service: Service<ResponseMock, Void> = RequestBuilder {
             Put("https://base-url.com", "/upload")
             Body(.data("Dummy file content".data(using: .utf8)!))
-            Use(networkClient)
+            Use(NetworkClient(session: MockSession(nil, resumeStub)))
         }.build()
 
         let result: ResponseMock = try await service.upload(resumeFrom: resumeData)
@@ -189,10 +182,9 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (expectedDownloadedData, response)
         }
-        let networkClient = NetworkClient(session: MockSession(responseStub))
         let service: Service<ResponseMock, Void> = RequestBuilder {
             Get("https://base-url.com", "/download")
-            Use(networkClient)
+            Use(NetworkClient(session: MockSession(responseStub)))
         }.build()
 
         let response: URL = try await service.download()
@@ -210,10 +202,9 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (expectedDownloadedData, response)
         }
-        let networkClient = NetworkClient(session: MockSession(responseStub, delay: 2))
         let service: Service<ResponseMock, Void> = RequestBuilder {
             Get("https://base-url.com", "/download")
-            Use(networkClient)
+            Use(NetworkClient(session: MockSession(responseStub, delay: 2)))
         }.build()
 
         do {
@@ -238,10 +229,9 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (expectedDownloadedData, response)
         }
-        let networkClient = NetworkClient(session: MockSession(responseStub, delay: 2))
         let service: Service<ResponseMock, Void> = RequestBuilder {
             Get("https://base-url.com", "/download")
-            Use(networkClient)
+            Use(NetworkClient(session: MockSession(responseStub, delay: 2)))
         }.build()
 
         do {
@@ -270,10 +260,9 @@ struct NetworkTests {
             #expect(data == resumeData)
             return (expectedDownloadedData, response)
         }
-        let networkClient = NetworkClient(session: MockSession(nil, resumeStub))
         let service: Service<ResponseMock, Void> = RequestBuilder {
             Get("https://base-url.com", "/download")
-            Use(networkClient)
+            Use(NetworkClient(session: MockSession(nil, resumeStub)))
         }.build()
 
         let response: URL = try await service.download(resumeFrom: resumeData)
@@ -285,18 +274,11 @@ struct NetworkTests {
 
     @Test
     func requestOnline() async throws {
-        struct TestService: ServiceProtocol {
-            var service: Service<ResponseOnlineMock, Void>
-            
-            init() {
-                self.service = RequestBuilder {
-                    Get("https://jsonplaceholder.typicode.com", "/todos/1")
-                }.build()
-            }
-        }
-        
+        let service: Service<ResponseOnlineMock, Void> = RequestBuilder {
+            Get("https://jsonplaceholder.typicode.com", "/todos/1")
+        }.build()
+
         do {
-            let service = TestService()
             let _: ResponseOnlineMock = try await service.request()
             #expect(true)
         } catch {
@@ -306,18 +288,11 @@ struct NetworkTests {
     
     @Test
     func requestOnlineCancel() async throws {
-        struct TestService: ServiceProtocol {
-            var service: Service<ResponseOnlineMock, Void>
-            
-            init() {
-                self.service = RequestBuilder {
-                    Get("https://jsonplaceholder.typicode.com", "/todos/1")
-                }.build()
-            }
-        }
-        
+        let service: Service<ResponseOnlineMock, Void> = RequestBuilder {
+            Get("https://jsonplaceholder.typicode.com", "/todos/1")
+        }.build()
+
         do {
-            let service = TestService()
             Task {
                 try await Task.sleep(for: .seconds(0.05))
                 let _ = await service.cancel()
@@ -332,8 +307,7 @@ struct NetworkTests {
     @Test
     func requestOnlineTaskCancel() async throws {
         let service: Service<ResponseOnlineMock, Void> = RequestBuilder {
-            Get("https://base-url.com", "/download")
-            Use(NetworkClient(session: URLSession.shared))
+            Get("https://jsonplaceholder.typicode.com", "/todos/1")
         }.build()
         
         do {

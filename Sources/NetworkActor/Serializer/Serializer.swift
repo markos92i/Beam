@@ -5,7 +5,6 @@
 //  Created by Marcos del Castillo Camacho on 15/05/2026.
 //
 
-
 import Foundation
 #if canImport(UIKit)
 import UIKit
@@ -20,49 +19,66 @@ public struct Serializer: Sendable {
         self.decoder = decoder
     }
     
-    public func encode<Value>(_ value: Value) throws -> Data? {
+    public func encode<Value>(_ value: Value) throws -> Data {
         switch value {
-        case let value as Data:
-            return value
-        case let value as String:
-            return value.data(using: .utf8)
-        case let value as Codable:
+        case let data as Data:
+            return data
+            
+        case let string as String:
+            guard let data = string.data(using: .utf8) else { throw SerializerError.incorrect }
+            return data
+            
+        case let codable as Codable:
             do {
-                return try encoder.encode(value)
+                return try encoder.encode(codable)
             } catch let error as EncodingError {
                 throw SerializerError(encodingError: error)
             } catch {
                 throw error
             }
+            
         default:
-            return nil
+            throw SerializerError.unsuported
         }
     }
     
-    public func decode<Value>(data: Data) throws -> Value? {
+    /// Deserializa Data pura al tipo genérico inferido. Garantiza el resultado o lanza excepción.
+    public func decode<Value>(data: Data) throws -> Value {
         switch Value.self {
         case is Data.Type:
-            return data as? Value
+            guard let result = data as? Value else { throw SerializerError.incorrect }
+            return result
+            
         case is Bool.Type:
-            return Bool(String(data: data, encoding: .utf8) ?? "false") as? Value
+            guard let string = String(data: data, encoding: .utf8), let result = Bool(string) as? Value else { throw SerializerError.incorrect }
+            return result
+            
         case is String.Type:
-            return String(data: data, encoding: .utf8) as? Value
+            guard let result = String(data: data, encoding: .utf8) as? Value else { throw SerializerError.incorrect }
+            return result
+            
         case let type as Codable.Type:
             do {
-                return try decoder.decode(type, from: data) as? Value
+                guard let result = try decoder.decode(type, from: data) as? Value else { throw SerializerError.incorrect }
+                return result
             } catch let error as DecodingError {
                 throw SerializerError(decodingError: error)
             } catch {
                 throw error
             }
-#if canImport(UIKit)
+            
+        #if canImport(UIKit)
         case is UIImage.Type:
-            return UIImage(data: data) as? Value
-#endif
+            guard let result = UIImage(data: data) as? Value else { throw SerializerError.incorrect }
+            return result
+        #endif
+            
         case is Void.Type:
-            return () as? Value
+            guard let result = () as? Value else { throw SerializerError.incorrect }
+            return result
+            
         default:
-            return nil
+            throw SerializerError.unsuported
         }
     }
 }

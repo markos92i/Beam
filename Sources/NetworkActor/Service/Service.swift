@@ -59,10 +59,7 @@ public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
     public func request() async throws(ServiceError<Failure>) -> Success {
         try await perform() { request, data in
             let response: Data = try await network.data(for: request)
-            guard let decoded: Success = try serializer.decode(data: response) else {
-                throw ServiceError<Failure>.decode
-            }
-            return decoded
+            return try serializer.decode(data: response)
         }
     }
     
@@ -71,30 +68,21 @@ public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
             guard let data else { throw ServiceError<Failure>.missingUploadData }
 
             let response: Data = try await network.upload(for: request, data: data)
-            guard let decoded: Success = try serializer.decode(data: response) else {
-                throw ServiceError<Failure>.decode
-            }
-            return decoded
+            return try serializer.decode(data: response)
         }
     }
     
     public func upload(url: URL) async throws(ServiceError<Failure>) -> Success {
         try await perform() { request, _ in
             let response: Data = try await network.upload(for: request, url: url)
-            guard let decoded: Success = try serializer.decode(data: response) else {
-                throw ServiceError<Failure>.decode
-            }
-            return decoded
+            return try serializer.decode(data: response)
         }
     }
 
     public func upload(resumeFrom data: Data) async throws(ServiceError<Failure>) -> Success {
         try await perform() { request, _ in
             let response: Data = try await network.upload(for: request, resumeFrom: data)
-            guard let decoded: Success = try serializer.decode(data: response) else {
-                throw ServiceError<Failure>.decode
-            }
-            return decoded
+            return try serializer.decode(data: response)
         }
     }
     
@@ -118,10 +106,7 @@ public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
                 throw ServiceError<Failure>.invalidURL
             }
             let data = try Data(contentsOf: url)
-            guard let decoded: Success = try serializer.decode(data: data) else {
-                throw ServiceError<Failure>.decode
-            }
-            return decoded
+            return try serializer.decode(data: data)
         } catch {
             throw await mapError(error)
         }

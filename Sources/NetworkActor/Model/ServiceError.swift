@@ -8,6 +8,8 @@
 import Foundation
 
 public enum ServiceError<Failure: Sendable>: Error, Identifiable {
+    case unsuported
+    case incorrect
     case encode
     case decode
     case storage
@@ -29,20 +31,23 @@ public enum ServiceError<Failure: Sendable>: Error, Identifiable {
     // MARK: - Identifiable Compliance
     public var id: Int {
         switch self {
-        case .encode: 0
-        case .decode: 1
-        case .storage: 2
-        case .invalidURL: 3
-        case .invalidFormat: 4
-        case .missingUploadData: 5
-        case .missingToken: 6
-        case .noResponse: 7
+        case .unsuported: 0
+        case .incorrect: 1
+        case .encode: 2
+        case .decode: 3
+        case .storage: 4
+        case .invalidURL: 5
+        case .invalidFormat: 6
+        case .missingUploadData: 7
+        case .missingToken: 8
+        case .noResponse: 9
             
-        case .cancelled: 8
-        case .timedOut: 9
-        case .noConnection: 10
-        case .serverUnreachable: 11
-        case .sslError: 12
+        case .cancelled: 80
+        case .timedOut: 81
+        case .noConnection: 82
+        case .serverUnreachable: 83
+        case .sslError: 84
+            
         case .unknown: 99
 
         case .http(let code, _): code.rawValue
@@ -86,6 +91,8 @@ extension ServiceError {
     
     init(from serializerError: SerializerError) {
         switch serializerError {
+        case .unsuported: self = .encode
+        case .incorrect: self = .encode
         case .encoding: self = .encode
         case .decoding: self = .decode
         }
