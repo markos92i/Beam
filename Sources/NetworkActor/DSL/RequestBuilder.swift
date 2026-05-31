@@ -62,11 +62,11 @@ public enum NetworkDSL {
         public func apply(to builder: inout RequestBuilderState) { builder.crash = crash }
     }
 
-    public struct WithSerializer: RequestComponent {
+    public struct Mapper: RequestComponent {
         let serializer: Serializer
         public func apply(to builder: inout RequestBuilderState) { builder.serializer = serializer }
     }
-
+    
     public struct Config: RequestComponent {
         let config: ServiceConfig
         public func apply(to builder: inout RequestBuilderState) { builder.config = config }
@@ -93,7 +93,7 @@ public func Timeout(_ interval: TimeInterval) -> NetworkDSL.Timeout { .init(inte
 public func Use(_ client: any ClientProtocol) -> NetworkDSL.Use { .init(client: client) }
 public func Auth(_ auth: any AuthProtocol) -> NetworkDSL.Auth { .init(auth: auth) }
 public func Crash(_ crash: any CrashProtocol) -> NetworkDSL.Crash { .init(crash: crash) }
-public func WithSerializer(_ serializer: Serializer) -> NetworkDSL.WithSerializer { .init(serializer: serializer) }
+public func Mapper(_ serializer: Serializer) -> NetworkDSL.Mapper { .init(serializer: serializer) }
 public func Config(_ config: ServiceConfig) -> NetworkDSL.Config { .init(config: config) }
 
 
