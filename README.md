@@ -110,3 +110,50 @@ final class ProfileViewModel: ObservableObject {
     }
 }
 ```
+
+
+### 2. AuthManager Example
+
+If you want the network layer can manage token renovation by itself passing your AuthManager and it will also add the authHeaders to the calls that use it automatically.
+
+swift
+```
+actor AuthManager: AuthProtocol {
+    static let shared = AuthManager()
+    
+    private lazy var engine = AuthEngine(onRefresh: Self.refresh)
+    
+    var authHeader: [String: String] { get async throws { ["Authorization": "Bearer \(try await token.id)"] } }
+    var token: Token { get async throws { try await engine.resolveToken() } }
+        
+    func set(token: Token) async { await engine.set(token: token) }
+    
+    func invalidate() async { await engine.invalidate() }
+
+    func clear() async { await engine.clear() }
+            
+    static func refresh() async throws -> Token {
+        /*
+        Service call to your token refresh service
+         */
+        return Token(id: "token value", date: .now, expiration: 3600)
+    }
+}
+```
+
+### 3. CrashManager Example
+
+If you want to print or report to lets say Firebase Crashlytics you can pass a CrashManager to the RequestBuilder and you will receive everything thats reported by the library.
+
+swift
+```
+struct CrashManager: CrashProtocol {
+    static let shared = CrashManager()
+    
+    func report(error: Error, userInfo: [String: Any] = [:]) {
+        // let commonInfo: [String: Any] = ["UserID": Defaults.shared.userID].merging(userInfo) { (a, _) in a }
+        // Crashlytics.crashlytics().record(error: error, userInfo: commonInfo)
+        print("[REPORT] CrashManager: \(error.localizedDescription)\nDetails: \(userInfo)")
+    }
+}
+```
