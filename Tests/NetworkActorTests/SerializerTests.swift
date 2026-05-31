@@ -14,7 +14,29 @@ struct SerializerTests {
     private let serializer = Serializer()
     
     @Test
-    func testDictionarySerializationWithISO8601Dates() throws {
+    func json() throws {
+        struct Stub: Codable, Equatable {
+            var id: Int = 0
+            var value: String = ""
+            var date: Date = Date(timeIntervalSince1970: 1780183200) // 2026-05-30T23:20:00Z
+        }
+        
+        let httpBody = HTTPBody.json(Stub())
+        
+        let dataResult = try httpBody.data(with: serializer)
+        
+        guard let jsonObject: Stub = try serializer.decode(data: dataResult) else {
+            Issue.record("Not a valid JSON")
+            return
+        }
+        
+        #expect(jsonObject.id == 0)
+        #expect(jsonObject.value == "")
+        #expect(jsonObject.date == Date(timeIntervalSince1970: 1780183200))
+    }
+
+    @Test
+    func dictionary() throws {
         let httpBody = HTTPBody.dictionary([
             "string_key": "SwiftConcurrency",
             "int_key": 2026,
@@ -36,7 +58,7 @@ struct SerializerTests {
     }
     
     @Test
-    func testEmptyDictionarySerialization() throws {
+    func emptyDictionary() throws {
         let httpBody = HTTPBody.dictionary([:])
         let dataResult = try httpBody.data(with: serializer)
 
