@@ -28,6 +28,15 @@ public struct Serializer: Sendable {
             guard let data = string.data(using: .utf8) else { throw SerializerError.incorrect }
             return data
             
+        case let dictionary as DictionaryWrapper:
+            do {
+                return try encoder.encode(dictionary)
+            } catch let error as EncodingError {
+                throw SerializerError(encodingError: error)
+            } catch {
+                throw error
+            }
+
         case let codable as Codable:
             do {
                 return try encoder.encode(codable)

@@ -11,6 +11,7 @@ import Testing
 
 @Suite
 struct NetworkTests {
+    
     @Test
     func requestSuccess() async throws {
         let mockBody = ResponseMock(id: "123", value: 1000)

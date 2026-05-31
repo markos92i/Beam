@@ -51,6 +51,7 @@ extension ServicePayload {
     public var contentHeaders: [String : String] {
         switch body {
         case .data: [:]
+        case .dictionary: ContentType.json().header
         case .json: ContentType.json().header
         case .multipart(let multipart): multipart.header
         case .none: [:]
@@ -59,12 +60,5 @@ extension ServicePayload {
     
     public var allHeaders: [String : String] { headers.merging(contentHeaders) { $1 } }
     
-    public func data(with serializer: Serializer) throws -> Data? {
-        switch body {
-        case .data(let data): data
-        case .json(let encodable): try serializer.encode(encodable)
-        case .multipart(let multipart): try multipart.body
-        case .none: nil
-        }
-    }
+    public func data(with serializer: Serializer) throws -> Data? { try body?.data(with: serializer) }
 }
