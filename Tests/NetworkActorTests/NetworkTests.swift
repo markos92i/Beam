@@ -76,7 +76,6 @@ struct NetworkTests {
             
             var service: Service<ResponseMock, Void> {
                 Get("https://base-url.com", "/upload")
-                Body(.data("Dummy file content".data(using: .utf8)!))
                 Use(NetworkClient(session: MockSession(responseStub)))
             }
         }
@@ -103,7 +102,6 @@ struct NetworkTests {
             
             var service: Service<ResponseMock, Void> {
                 Get("https://base-url.com", "/upload")
-                Body(.data("Dummy file content".data(using: .utf8)!))
                 Use(NetworkClient(session: MockSession(responseStub, delay: 1)))
             }
         }
@@ -207,7 +205,6 @@ struct NetworkTests {
             
             var service: Service<ResponseMock, Void> {
                 Get("https://base-url.com", "/upload")
-                Body(.data("Dummy file content".data(using: .utf8)!))
                 Use(NetworkClient(session: MockSession(nil, resumeStub)))
             }
         }

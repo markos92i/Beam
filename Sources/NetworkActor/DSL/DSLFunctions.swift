@@ -8,15 +8,17 @@
 import Foundation
 
 // MARK: Methods
-public func Connect(_ host: String, _ path: String) -> DSL.Method { .init(method: .connect, host: host, path: path) }
-public func Get(_ host: String, _ path: String) -> DSL.Method { .init(method: .get, host: host, path: path) }
-public func Post(_ host: String, _ path: String) -> DSL.Method { .init(method: .post, host: host, path: path) }
-public func Put(_ host: String, _ path: String) -> DSL.Method { .init(method: .put, host: host, path: path) }
-public func Delete(_ host: String, _ path: String) -> DSL.Method { .init(method: .delete, host: host, path: path) }
-public func Patch(_ host: String, _ path: String) -> DSL.Method { .init(method: .patch, host: host, path: path) }
-public func Head(_ host: String, _ path: String) -> DSL.Method { .init(method: .head, host: host, path: path) }
-public func Options(_ host: String, _ path: String) -> DSL.Method { .init(method: .options, host: host, path: path) }
-public func Trace(_ host: String, _ path: String) -> DSL.Method { .init(method: .trace, host: host, path: path) }
+public func Get(_ host: String, _ path: String) -> DSL.Method<BodyForbidden> { .init(method: .get, host: host, path: path) }
+public func Delete(_ host: String, _ path: String) -> DSL.Method<BodyForbidden> { .init(method: .delete, host: host, path: path) }
+public func Head(_ host: String, _ path: String) -> DSL.Method<BodyForbidden> { .init(method: .head, host: host, path: path) }
+public func Options(_ host: String, _ path: String) -> DSL.Method<BodyForbidden> { .init(method: .options, host: host, path: path) }
+public func Trace(_ host: String, _ path: String) -> DSL.Method<BodyForbidden> { .init(method: .trace, host: host, path: path) }
+public func Connect(_ host: String, _ path: String) -> DSL.Method<BodyForbidden> { .init(method: .connect, host: host, path: path) }
+
+// 🍎 Métodos mutables (CON Body)
+public func Post(_ host: String, _ path: String) -> DSL.Method<BodyAllowed> { .init(method: .post, host: host, path: path) }
+public func Put(_ host: String, _ path: String) -> DSL.Method<BodyAllowed> { .init(method: .put, host: host, path: path) }
+public func Patch(_ host: String, _ path: String) -> DSL.Method<BodyAllowed> { .init(method: .patch, host: host, path: path) }
 
 // MARK: Header
 public func Header(_ key: String, value: String) -> DSL.Header { .init(key, value: value) }
