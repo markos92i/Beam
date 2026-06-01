@@ -11,4 +11,5 @@ public enum AuthError: Error, Sendable {
     case missingToken
     case invalidCredentials
     case failedToRefreshToken
+    case unknown
 }

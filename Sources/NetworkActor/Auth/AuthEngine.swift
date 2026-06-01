@@ -83,7 +83,7 @@ public actor AuthEngine<T: AuthToken> {
                 self.clear()
                 throw AuthError.invalidCredentials
             } catch {
-                throw error
+                throw AuthError.unknown
             }
         }
         

@@ -3,7 +3,6 @@
 //  NetworkActor
 //
 //  Created by Marcos del Castillo Camacho on 10/3/25.
-//  Copyright © 2025 SNGULAR. All rights reserved.
 //
 
 import Foundation
@@ -38,10 +37,15 @@ public enum ContentType: Sendable {
     }
     
     public enum ImageFormat: String, Sendable {
+        case avif
+        case apng
+        case gif
+        case heic
+        case heif
         case jpeg
         case png
+        case svg
         case webp
-        case gif
     }
 }
 

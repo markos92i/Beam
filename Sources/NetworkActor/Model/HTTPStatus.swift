@@ -22,6 +22,8 @@ public enum HTTPStatus: Int, Error, CustomStringConvertible {
         case serverError
         case undefined
     }
+    
+    case undefined = 0
 
     // MARK: - Informational - 1xx
 
@@ -232,50 +234,50 @@ public enum HTTPStatus: Int, Error, CustomStringConvertible {
     case networkAuthenticationRequired = 511
 
     /// The class (or group) which the status code belongs to.
-    public var responseType: ResponseType {
+    public var type: ResponseType {
         switch self.rawValue {
-        case 100..<200: return .informational
-        case 200..<300: return .success
-        case 300..<400: return .redirection
-        case 400..<500: return .clientError
-        case 500..<600: return .serverError
-        default:        return .undefined
+        case 100..<200: .informational
+        case 200..<300: .success
+        case 300..<400: .redirection
+        case 400..<500: .clientError
+        case 500..<600: .serverError
+        default:        .undefined
         }
     }
 
     public var name: String {
         switch self {
-        case .ok:                       return "SUCCESS"
-        case .accepted:                 return "ACCEPTED"
+        case .ok:                   "SUCCESS"
+        case .accepted:             "ACCEPTED"
         case .nonAuthoritativeInformation,
-             .partialContent:           return "PARTIAL_SUCCESS"
-        case .badRequest:               return "USER_PASS_ERROR"
-        case .unauthorized:             return "USER_UNAUTHORIZED"
-        case .notFound:                 return "NOT_FOUND"
-        case .internalServerError:      return "INTERNAL_SERVER_ERROR"
-        case .notImplemented:           return "SERVER_ERROR"
-        case .forbidden:                return "ACCESS_DENIED"
-        case .conflict:                 return "CONFLICT"
-        default:                        return "UNDEFINIED"
+             .partialContent:       "PARTIAL_SUCCESS"
+        case .badRequest:           "USER_PASS_ERROR"
+        case .unauthorized:         "USER_UNAUTHORIZED"
+        case .notFound:             "NOT_FOUND"
+        case .internalServerError:  "INTERNAL_SERVER_ERROR"
+        case .notImplemented:       "SERVER_ERROR"
+        case .forbidden:            "ACCESS_DENIED"
+        case .conflict:             "CONFLICT"
+        default:                    "UNDEFINIED"
         }
     }
 
     public var description: String {
         switch self {
-        case .ok:                       return "Éxito"
-        case .accepted:                 return "Aceptado"
+        case .ok:                   "Éxito"
+        case .accepted:             "Aceptado"
         case .nonAuthoritativeInformation,
-             .partialContent:           return "Éxito parcial"
-        case .badRequest:               return "Petición incorrecta"
-        case .unauthorized:             return "Petición no autorizada"
-        case .notFound:                 return "Elemento no encontrado"
-        case .internalServerError:      return "Error interno del servidor"
-        case .notImplemented:           return "No implementado"
-        case .forbidden:                return "Acceso denegado"
-        case .conflict:                 return "Conflicto"
-        case .requestTimeout:           return "Se ha agotado el tiempo de espera"
-        case .clientClosedRequest:      return "Se ha cancelado la operación"
-        default:                        return "Desconocido"
+             .partialContent:       "Éxito parcial"
+        case .badRequest:           "Petición incorrecta"
+        case .unauthorized:         "Petición no autorizada"
+        case .notFound:             "Elemento no encontrado"
+        case .internalServerError:  "Error interno del servidor"
+        case .notImplemented:       "No implementado"
+        case .forbidden:            "Acceso denegado"
+        case .conflict:             "Conflicto"
+        case .requestTimeout:       "Se ha agotado el tiempo de espera"
+        case .clientClosedRequest:  "Se ha cancelado la operación"
+        default:                    "Desconocido"
         }
     }
 
@@ -285,6 +287,6 @@ extension HTTPURLResponse {
 
     var status: HTTPStatus? { HTTPStatus(rawValue: statusCode) }
 
-    var contentType: String? { allHeaderFields["Content-Type"] as? String }
+    var contentType: String { (allHeaderFields["Content-Type"] as? String) ?? ContentType.data.value }
 
 }
