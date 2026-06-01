@@ -56,6 +56,16 @@ public enum ServiceError<Failure: Sendable>: Error, Identifiable {
 }
 
 extension ServiceError {
+    public var status: HTTPStatus? {
+        if case .http(let status, _) = self { status } else { nil }
+    }
+
+    public var body: Failure? {
+        if case .http(_, let body) = self { body } else { nil }
+    }
+}
+
+extension ServiceError {
     init(from networkError: NetworkError, body: Failure? = nil) {
         switch networkError {
         case .url(let urlError):

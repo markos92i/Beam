@@ -60,5 +60,5 @@ extension ServicePayload {
     
     public var allHeaders: [String : String] { headers.merging(contentHeaders) { $1 } }
     
-    public func data(with serializer: Serializer) throws -> Data? { try body?.data(with: serializer) }
+    public func data(with serializer: SerializerProtocol) throws -> Data? { try body?.data(with: serializer) }
 }

@@ -21,12 +21,18 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (expectedData, response)
         }
-        let service: Service<ResponseMock, Void> = RequestBuilder {
-            Get("https://base-url.com", "/ok")
-            Use(NetworkClient(session: MockSession(responseStub)))
-        }.build()
+        struct TestEndpoint: Endpoint {
+            let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))?
+            
+            var service: Service<ResponseMock, Void> {
+                Get("https://base-url.com", "/ok")
+                Use(NetworkClient(session: MockSession(responseStub)))
+            }
+        }
+        
+        let service = TestEndpoint(responseStub: responseStub)
 
-        let result: ResponseMock = try await service.request()
+        let result: ResponseMock = try await service.data()
         #expect(result.id == mockBody.id)
         #expect(result.value == mockBody.value)
     }
@@ -37,13 +43,19 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
             return (Data(), response)
         }
-        let service: Service<ResponseMock, Void> = RequestBuilder {
-            Get("https://base-url.com", "/error")
-            Use(NetworkClient(session: MockSession(responseStub)))
-        }.build()
+        struct TestEndpoint: Endpoint {
+            let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))?
+            
+            var service: Service<ResponseMock, Void> {
+                Get("https://base-url.com", "/error")
+                Use(NetworkClient(session: MockSession(responseStub)))
+            }
+        }
+        
+        let service = TestEndpoint(responseStub: responseStub)
 
         do {
-            let _: ResponseMock = try await service.request()
+            let _: ResponseMock = try await service.data()
             #expect(Bool(false))
         } catch {
             #expect(true)
@@ -59,11 +71,17 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             return (expectedData, response)
         }
-        let service: Service<ResponseMock, Void> = RequestBuilder {
-            Get("https://base-url.com", "/upload")
-            Body(.data("Dummy file content".data(using: .utf8)!))
-            Use(NetworkClient(session: MockSession(responseStub)))
-        }.build()
+        struct TestEndpoint: Endpoint {
+            let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))?
+            
+            var service: Service<ResponseMock, Void> {
+                Get("https://base-url.com", "/upload")
+                Body(.data("Dummy file content".data(using: .utf8)!))
+                Use(NetworkClient(session: MockSession(responseStub)))
+            }
+        }
+        
+        let service = TestEndpoint(responseStub: responseStub)
 
         let result: ResponseMock = try await service.upload()
         #expect(result.id == mockBody.id)
@@ -79,11 +97,18 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             return (expectedData, response)
         }
-        let service: Service<ResponseMock, Void> = RequestBuilder {
-            Get("https://base-url.com", "/upload")
-            Body(.data("Dummy file content".data(using: .utf8)!))
-            Use(NetworkClient(session: MockSession(responseStub, delay: 2)))
-        }.build()
+        
+        struct TestEndpoint: Endpoint {
+            let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))?
+            
+            var service: Service<ResponseMock, Void> {
+                Get("https://base-url.com", "/upload")
+                Body(.data("Dummy file content".data(using: .utf8)!))
+                Use(NetworkClient(session: MockSession(responseStub, delay: 1)))
+            }
+        }
+        
+        let service = TestEndpoint(responseStub: responseStub)
         
         do {
             Task {
@@ -107,17 +132,23 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             return (expectedData, response)
         }
-        let service: Service<ResponseMock, Void> = RequestBuilder {
-            Get("https://base-url.com", "/upload")
-            Body(.data("Dummy file content".data(using: .utf8)!))
-            Use(NetworkClient(session: MockSession(responseStub, delay: 2)))
-        }.build()
+        struct TestEndpoint: Endpoint {
+            let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))?
+            
+            var service: Service<ResponseMock, Void> {
+                Post("https://base-url.com", "/upload")
+                Body(.data("Dummy file content".data(using: .utf8)!))
+                Use(NetworkClient(session: MockSession(responseStub, delay: 1)))
+            }
+        }
         
+        let service = TestEndpoint(responseStub: responseStub)
+
         do {
             let job = Task { try await service.upload() }
 
             Task {
-                try await Task.sleep(for: .seconds(0.5))
+                try await Task.sleep(for: .seconds(0.05))
                 job.cancel()
             }
             
@@ -141,11 +172,17 @@ struct NetworkTests {
             let data = try Data(contentsOf: temporaryURL)
             return (data, response)
         }
-        let service: Service<ResponseMock, Void> = RequestBuilder {
-            Get("https://base-url.com", "/upload")
-            Body(.data("Dummy file content".data(using: .utf8)!))
-            Use(NetworkClient(session: MockSession(responseStub)))
-        }.build()
+        struct TestEndpoint: Endpoint {
+            let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))?
+            
+            var service: Service<ResponseMock, Void> {
+                Post("https://base-url.com", "/upload")
+                Body(.data("Dummy file content".data(using: .utf8)!))
+                Use(NetworkClient(session: MockSession(responseStub)))
+            }
+        }
+        
+        let service = TestEndpoint(responseStub: responseStub)
 
         let result: ResponseMock = try await service.upload(url: temporaryURL)
         #expect(result.id == mockBody.id)
@@ -164,11 +201,18 @@ struct NetworkTests {
             #expect(data == resumeData)
             return (expectedData, response)
         }
-        let service: Service<ResponseMock, Void> = RequestBuilder {
-            Put("https://base-url.com", "/upload")
-            Body(.data("Dummy file content".data(using: .utf8)!))
-            Use(NetworkClient(session: MockSession(nil, resumeStub)))
-        }.build()
+
+        struct TestEndpoint: Endpoint {
+            let resumeStub: (@Sendable (Data) async throws -> (Data, URLResponse))?
+            
+            var service: Service<ResponseMock, Void> {
+                Get("https://base-url.com", "/upload")
+                Body(.data("Dummy file content".data(using: .utf8)!))
+                Use(NetworkClient(session: MockSession(nil, resumeStub)))
+            }
+        }
+        
+        let service = TestEndpoint(resumeStub: resumeStub)
 
         let result: ResponseMock = try await service.upload(resumeFrom: resumeData)
         #expect(result.id == expectedResponse.id)
@@ -183,10 +227,16 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (expectedDownloadedData, response)
         }
-        let service: Service<ResponseMock, Void> = RequestBuilder {
-            Get("https://base-url.com", "/download")
-            Use(NetworkClient(session: MockSession(responseStub)))
-        }.build()
+        struct TestEndpoint: Endpoint {
+            let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))?
+            
+            var service: Service<ResponseMock, Void> {
+                Get("https://base-url.com", "/download")
+                Use(NetworkClient(session: MockSession(responseStub)))
+            }
+        }
+        
+        let service = TestEndpoint(responseStub: responseStub)
 
         let response: URL = try await service.download()
         let dataFromFile = try Data(contentsOf: response)
@@ -203,10 +253,16 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (expectedDownloadedData, response)
         }
-        let service: Service<ResponseMock, Void> = RequestBuilder {
-            Get("https://base-url.com", "/download")
-            Use(NetworkClient(session: MockSession(responseStub, delay: 2)))
-        }.build()
+        struct TestEndpoint: Endpoint {
+            let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))?
+            
+            var service: Service<ResponseMock, Void> {
+                Get("https://base-url.com", "/download")
+                Use(NetworkClient(session: MockSession(responseStub, delay: 1)))
+            }
+        }
+        
+        let service = TestEndpoint(responseStub: responseStub)
 
         do {
             Task {
@@ -230,10 +286,16 @@ struct NetworkTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (expectedDownloadedData, response)
         }
-        let service: Service<ResponseMock, Void> = RequestBuilder {
-            Get("https://base-url.com", "/download")
-            Use(NetworkClient(session: MockSession(responseStub, delay: 2)))
-        }.build()
+        struct TestEndpoint: Endpoint {
+            let responseStub: (@Sendable (URLRequest) async throws -> (Data, URLResponse))?
+            
+            var service: Service<ResponseMock, Void> {
+                Get("https://base-url.com", "/download")
+                Use(NetworkClient(session: MockSession(responseStub, delay: 1)))
+            }
+        }
+        
+        let service = TestEndpoint(responseStub: responseStub)
 
         do {
             let job = Task { try await service.download() }
@@ -261,10 +323,17 @@ struct NetworkTests {
             #expect(data == resumeData)
             return (expectedDownloadedData, response)
         }
-        let service: Service<ResponseMock, Void> = RequestBuilder {
-            Get("https://base-url.com", "/download")
-            Use(NetworkClient(session: MockSession(nil, resumeStub)))
-        }.build()
+
+        struct TestEndpoint: Endpoint {
+            let resumeStub: (@Sendable (Data) async throws -> (Data, URLResponse))?
+            
+            var service: Service<ResponseMock, Void> {
+                Get("https://base-url.com", "/download")
+                Use(NetworkClient(session: MockSession(nil, resumeStub)))
+            }
+        }
+        
+        let service = TestEndpoint(resumeStub: resumeStub)
 
         let response: URL = try await service.download(resumeFrom: resumeData)
         let dataFromFile = try Data(contentsOf: response)
@@ -275,12 +344,16 @@ struct NetworkTests {
 
     @Test
     func requestOnline() async throws {
-        let service: Service<ResponseOnlineMock, Void> = RequestBuilder {
-            Get("https://jsonplaceholder.typicode.com", "/todos/1")
-        }.build()
+        struct TestEndpoint: Endpoint {
+            var service: Service<ResponseOnlineMock, Void> {
+                Get("https://jsonplaceholder.typicode.com", "/todos/1")
+            }
+        }
+        
+        let service = TestEndpoint()
 
         do {
-            let _: ResponseOnlineMock = try await service.request()
+            let _: ResponseOnlineMock = try await service.data()
             #expect(true)
         } catch {
             #expect(Bool(false))
@@ -289,16 +362,20 @@ struct NetworkTests {
     
     @Test
     func requestOnlineCancel() async throws {
-        let service: Service<ResponseOnlineMock, Void> = RequestBuilder {
-            Get("https://jsonplaceholder.typicode.com", "/todos/1")
-        }.build()
+        struct TestEndpoint: Endpoint {
+            var service: Service<ResponseOnlineMock, Void> {
+                Get("https://jsonplaceholder.typicode.com", "/todos/1")
+            }
+        }
+        
+        let service = TestEndpoint()
 
         do {
             Task {
                 try await Task.sleep(for: .seconds(0.05))
                 let _ = await service.cancel()
             }
-            let _: ResponseOnlineMock = try await service.request()
+            let _: ResponseOnlineMock = try await service.data()
             #expect(Bool(false))
         } catch {
             #expect(error == .cancelled)
@@ -307,12 +384,16 @@ struct NetworkTests {
     
     @Test
     func requestOnlineTaskCancel() async throws {
-        let service: Service<ResponseOnlineMock, Void> = RequestBuilder {
-            Get("https://jsonplaceholder.typicode.com", "/todos/1")
-        }.build()
+        struct TestEndpoint: Endpoint {
+            var service: Service<ResponseOnlineMock, Void> {
+                Get("https://jsonplaceholder.typicode.com", "/todos/1")
+            }
+        }
         
+        let service = TestEndpoint()
+
         do {
-            let job = Task { try await service.request() }
+            let job = Task { try await service.data() }
 
             Task {
                 try await Task.sleep(for: .seconds(0.05))

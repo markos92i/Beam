@@ -10,7 +10,7 @@ import Foundation
 import UIKit
 #endif
 
-public struct Serializer: Sendable {
+public struct Serializer: SerializerProtocol {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 

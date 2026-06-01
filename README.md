@@ -9,7 +9,7 @@ The system guarantees type safety, strict dependency inversion, complete isolati
 ## 🎯 Architecture Pillars
 
 ### 1. Compile-Time Validation (Zero Runtime Routing Errors)
-The DSL utilizes static type constraints. The `DSLBuilder` enforces by signature that the very first element of the declarative block must be an HTTP method (`NetworkDSL.Method`). If a developer attempts to construct a request and forgets the verb (`Get`, `Post`, etc.), **Xcode will stop compilation in real time**, preventing human errors from reaching production.
+The DSL utilizes static type constraints. The `DSLBuilder` enforces by signature that the very first element of the declarative block must be an HTTP method (`DSL.Method`). If a developer attempts to construct a request and forgets the verb (`Get`, `Post`, etc.), **Xcode will stop compilation in real time**, preventing human errors from reaching production.
 
 ### 2. Robust Data Mapping (Mapper)
 The transformation of raw network bytes into domain models is managed via the **`Mapper`** component (aligned with industry standards found in major frameworks like Alamofire or Moya). The underlying `Serializer` has been hardened by removing optional returns: it guarantees a strongly-typed result or explicitly throws `.unsupported` or `.incorrect` exceptions (the latter when physical bytes do not match the inferred generic type).
@@ -47,70 +47,38 @@ When `.build()` is invoked on a `RequestBuilder`, the immutable configuration tr
 
 ### 1. Standard Service Implementation
 
-Endpoints can be encapsulated into structures conforming to `ServiceProtocol`. This isolates networking logic completely from the Presentation Layer.
+Endpoints can be encapsulated into structures conforming to `Endpoint`. This isolates networking logic completely from the Presentation Layer.
 
 ```swift
 import Foundation
 
-struct DeleteService: ServiceProtocol {
-    var service: Service<Void, ErrorDto>
-
-    init(id: String) {
-        self.service = RequestBuilder {
-            // 1. HTTP Method MUST be on the first line (Real-time compilation validation)
-            Delete(URLs.api, "/users/\(id)")
-            
-            // 2. Merged headers (Accepts full dictionaries)
-            Header([["Header1": "Value1"], ["Header2": "Value1"]])
-            Header("X-Device-Client", value: "iOS")
-            
-            // 3. Network infrastructure with custom SSL Pinning certificates
-            Use(NetworkClient(certificates: [CertificateData]))
-            
-            // 4. Configuration & Timeouts
-            Config(.standard)
-            Timeout(30)
-            
-            // 5. Architectural dependency injection
-            Auth(AuthManager.shared)
-            Crash(CrashManager.shared)
-        }.build()
+struct DeleteService: Endpoint {
+    let id: String
+    
+    var service: Service<Void, ErrorDto> {
+        // 1. HTTP Method MUST be on the first line (Real-time compilation validation)
+        Delete(URLs.api, "/users/\(id)")
+        
+        // 2. Merged headers (Accepts full dictionaries)
+        Header([["Header1": "Value1"], ["Header2": "Value1"]])
+        Header("X-Device-Client", value: "iOS")
+        
+        // 3. Network infrastructure with custom SSL Pinning certificates
+        Use(NetworkClient(certificates: [CertificateData]))
+        
+        // 4. Configuration & Timeouts
+        Config(.standard)
+        Timeout(30)
+        
+        // 5. Architectural dependency injection
+        Auth(AuthManager.shared)
+        Crash(CrashManager.shared)
+        
+        // 6. Custom serializer (for parsing JSON or any other type you want out of the included functionality)
+        Mapper(Serializer())
     }
 }
 ```
-
-Additionally you can simply declare a service wherever you want using the RequestBuilder or initializating a Service struct manually.
-
-```swift
-final class ProfileViewModel: ObservableObject {
-    var service: Service<MetricsDto, ErrorDto>
-    
-    init(documentId: String) {
-        self.deleteService = DeleteAccreditationsService(id: documentId)
-    }
-    
-    func deleteDocument() async {
-        do {
-            self.service = RequestBuilder<MetricsDto, ErrorDto> {
-                Get(URLs.api, "/metrics/legacy")
-                Header(APIConstants.headers)
-                
-                // Declaratively overrides the standard parser for this instance
-                Mapper(legacySerializer)
-                
-                Auth(AuthManager.shared)
-            }.build()
-
-            try await deleteService.service.request()
-            print("Operation completed successfully.")
-        } catch {
-            // Any network anomalies or mapping errors (SerializerError.incorrect) are captured here
-            print("Structured error received: \(error)")
-        }
-    }
-}
-```
-
 
 ### 2. AuthManager Example
 

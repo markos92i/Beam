@@ -8,26 +8,26 @@
 import SwiftUI
 
 public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
-    public var id = UUID().uuidString
+    public let id = UUID().uuidString
     
-    public var network: any ClientProtocol
-    public var auth: (any AuthProtocol)? = nil
-    public var crash: (any CrashProtocol)? = nil
-    public let serializer: Serializer
-    public var config: ServiceConfig
-    public var api: ServicePayload
+    public let client: any ClientProtocol
+    public let auth: (any AuthProtocol)?
+    public let crash: (any CrashProtocol)?
+    public let serializer: any SerializerProtocol
+    public let config: ServiceConfig
+    public let api: ServicePayload
     
-    public var progress: AsyncStream<Progress> { network.progress }
+    public var progress: AsyncStream<Progress> { client.progress }
 
     public init(
-        network: any ClientProtocol = NetworkClient(session: URLSession.shared),
+        client: any ClientProtocol = NetworkClient(session: URLSession.shared),
         auth: (any AuthProtocol)? = nil,
         crash: (any CrashProtocol)? = nil,
-        serializer: Serializer = .init(),
+        serializer: any SerializerProtocol = Serializer(),
         config: ServiceConfig = .standard,
         api: ServicePayload
     ) {
-        self.network = network
+        self.client = client
         self.auth = auth
         self.crash = crash
         self.serializer = serializer
@@ -56,9 +56,9 @@ public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
         throw ServiceError<Failure>.unknown
     }
     
-    public func request() async throws(ServiceError<Failure>) -> Success {
+    public func data() async throws(ServiceError<Failure>) -> Success {
         try await perform() { request, data in
-            let response: Data = try await network.data(for: request)
+            let response: Data = try await client.data(for: request)
             return try serializer.decode(data: response)
         }
     }
@@ -67,35 +67,35 @@ public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
         try await perform() { request, data in
             guard let data else { throw ServiceError<Failure>.missingUploadData }
 
-            let response: Data = try await network.upload(for: request, data: data)
+            let response: Data = try await client.upload(for: request, data: data)
             return try serializer.decode(data: response)
         }
     }
     
     public func upload(url: URL) async throws(ServiceError<Failure>) -> Success {
         try await perform() { request, _ in
-            let response: Data = try await network.upload(for: request, url: url)
+            let response: Data = try await client.upload(for: request, url: url)
             return try serializer.decode(data: response)
         }
     }
 
     public func upload(resumeFrom data: Data) async throws(ServiceError<Failure>) -> Success {
         try await perform() { request, _ in
-            let response: Data = try await network.upload(for: request, resumeFrom: data)
+            let response: Data = try await client.upload(for: request, resumeFrom: data)
             return try serializer.decode(data: response)
         }
     }
     
     public func download() async throws(ServiceError<Failure>) -> URL {
         try await perform() { request, _ in
-            let response = try await network.download(for: request)
+            let response = try await client.download(for: request)
             return try FileUtils.copy(url: response.url, to: .cachesDirectory, contentType: response.contentType)
         }
     }
     
     public func download(resumeFrom data: Data) async throws(ServiceError<Failure>) -> URL {
         try await perform() { request, _ in
-            let response = try await network.download(for: request, resumeFrom: data)
+            let response = try await client.download(for: request, resumeFrom: data)
             return try FileUtils.copy(url: response.url, to: .cachesDirectory, contentType: response.contentType)
         }
     }
@@ -113,7 +113,7 @@ public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
     }
         
     public func cancel() async -> Data? {
-        await network.cancel()
+        await client.cancel()
     }
 }
 

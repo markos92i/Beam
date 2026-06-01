@@ -15,7 +15,7 @@ public enum HTTPBody: Sendable {
 }
 
 extension HTTPBody {
-    public func data(with serializer: Serializer) throws -> Data {
+    public func data(with serializer: SerializerProtocol) throws -> Data {
         switch self {
         case .data(let data): data
         case .dictionary(let dict): try serializer.encode(DictionaryWrapper(dictionary: dict))
