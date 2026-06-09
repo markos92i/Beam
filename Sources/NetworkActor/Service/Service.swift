@@ -42,8 +42,8 @@ public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
         for attempt in 0...config.maxRetries {
             do {
                 return try await operation(try await request, try request.httpBody)
-            } catch let error as AuthError {
-                guard !(attempt == config.maxRetries), let auth else {
+            } catch let error as ClientError {
+                guard error.status == .unauthorized, !(attempt == config.maxRetries), let auth else {
                     throw await mapError(error)
                 }
                 
@@ -174,30 +174,32 @@ extension Service {
     private func mapError(_ error: Error) async -> ServiceError<Failure> {
         let serviceError: ServiceError<Failure>
         var extraInfo: [String: Any] = [:]
-        extraInfo["RequestURL"] = "[\(api.method.description)] \(api.url?.absoluteString ?? "Invalid URL")"
+        extraInfo["Endpoint"] = "[\(api.method.description)] \(api.url?.absoluteString ?? "Invalid URL")"
         extraInfo["RequestBody"] = String(data: (try? api.data(with: serializer)) ?? Data(), encoding: .utf8)?.prefix(2000) ?? "N/A"
 
         switch error {
         case let error as ServiceError<Failure>:
             serviceError = error
-        case let error as NetworkError:
+        case let error as ClientError:
             let body: Failure? = if let data = error.body, let body: Failure? = try? serializer.decode(data: data) { body } else { nil }
             serviceError = ServiceError(from: error, body: body)
-            extraInfo = error.info
+            extraInfo.merge(error.info) { $1 }
         case let error as URLError:
-            serviceError = ServiceError(from: NetworkError.url(error))
+            serviceError = ServiceError(from: ClientError.url(error))
         case let error as AuthError:
             serviceError = ServiceError(from: error)
         case let error as FileError:
             serviceError = ServiceError(from: error)
         case let error as SerializerError:
             serviceError = ServiceError(from: error)
-            extraInfo = error.info
+            extraInfo.merge(error.info) { $1 }
         default:
             serviceError = .unknown
         }
         
-        crash?.report(error: error, userInfo: extraInfo)
+        guard serviceError != .cancelled else { return serviceError }
+        
+        crash?.report(error: serviceError, userInfo: extraInfo)
         
         return serviceError
     }

@@ -68,3 +68,14 @@ private extension EncodingError.Context {
         codingPath.compactMap { $0.stringValue }.joined(separator: ".")
     }
 }
+
+extension SerializerError: CustomNSError {
+    public static var errorDomain: String { "network.SerializerError" }
+        
+    public var errorUserInfo: [String: Any] {
+        [
+            NSLocalizedDescriptionKey: "SerializerError: \(self)", // Main Message
+            "ErrorType": String(describing: type(of: self)) // Extras
+        ].merging(info) { $1 }
+    }
+}

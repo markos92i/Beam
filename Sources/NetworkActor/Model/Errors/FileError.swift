@@ -12,3 +12,13 @@ public enum FileError: Error {
     case removeFailed(Error)
     case copyFailed(Error)
 }
+
+extension FileError: CustomNSError {
+    public static var errorDomain: String { "network.FileError" }
+        
+    public var errorUserInfo: [String: Any] {
+        [
+            NSLocalizedDescriptionKey: "FileError: \(self)", // Main Message
+        ]
+    }
+}

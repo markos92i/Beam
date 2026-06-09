@@ -66,7 +66,7 @@ extension ServiceError {
 }
 
 extension ServiceError {
-    init(from networkError: NetworkError, body: Failure? = nil) {
+    init(from networkError: ClientError, body: Failure? = nil) {
         switch networkError {
         case .url(let urlError):
             switch urlError.code {
@@ -118,13 +118,14 @@ extension ServiceError: Equatable {
 }
 
 extension ServiceError: CustomNSError {
-    public static var errorDomain: String { Bundle.main.bundleIdentifier ?? "network.actor" }
+    public static var errorDomain: String { "network.ServiceError" }
     
     public var errorCode: Int { id }
     
     public var errorUserInfo: [String: Any] {
         [
-            NSLocalizedDescriptionKey: "\(id): \(self)",
+            NSLocalizedDescriptionKey: "ServiceError: \(self)",
+            NSLocalizedFailureErrorKey: "Status: \(status?.rawValue ?? id)",
         ]
     }
 }

@@ -9,12 +9,12 @@ import Foundation
 
 // MARK: - Protocol Definition
 public protocol ClientProtocol: Sendable {
-    func data(for: URLRequest) async throws(NetworkError) -> Data
-    func upload(for: URLRequest, data: Data) async throws(NetworkError) -> Data
-    func upload(for request: URLRequest, url: URL) async throws(NetworkError) -> Data
-    func upload(for request: URLRequest, resumeFrom data: Data) async throws(NetworkError) -> Data
-    func download(for: URLRequest) async throws(NetworkError) -> (url: URL, contentType: String)
-    func download(for request: URLRequest, resumeFrom data: Data) async throws(NetworkError) -> (url: URL, contentType: String)
+    func data(for: URLRequest) async throws(ClientError) -> Data
+    func upload(for: URLRequest, data: Data) async throws(ClientError) -> Data
+    func upload(for request: URLRequest, url: URL) async throws(ClientError) -> Data
+    func upload(for request: URLRequest, resumeFrom data: Data) async throws(ClientError) -> Data
+    func download(for: URLRequest) async throws(ClientError) -> (url: URL, contentType: String)
+    func download(for request: URLRequest, resumeFrom data: Data) async throws(ClientError) -> (url: URL, contentType: String)
     func cancel() async -> Data?
 
     var progress: AsyncStream<Progress> { get }
@@ -48,7 +48,7 @@ public actor NetworkClient: ClientProtocol {
     private func execute<T>(
         for request: URLRequest,
         operation: (URLSessionTaskDelegate) async throws -> (T, URLResponse)
-    ) async throws(NetworkError) -> (T, HTTPURLResponse) {
+    ) async throws(ClientError) -> (T, HTTPURLResponse) {
         do {
             logger.debug("[\(request.httpMethod ?? "")] \(request.url?.absoluteString ?? "")")
             if let body = request.httpBody, !body.isEmpty {
@@ -65,15 +65,15 @@ public actor NetworkClient: ClientProtocol {
                 let (value, response) = try await operation(delegate)
                 
                 guard let httpResponse = response as? HTTPURLResponse else {
-                    throw NetworkError.noResponse
+                    throw ClientError.noResponse
                 }
                 
                 guard let status = HTTPStatus(rawValue: httpResponse.statusCode) else {
-                    throw NetworkError.http(status: .undefined, body: value as? Data)
+                    throw ClientError.http(status: .undefined, body: value as? Data)
                 }
                 
                 guard status.type == .success else {
-                    throw NetworkError.http(status: status, body: value as? Data)
+                    throw ClientError.http(status: status, body: value as? Data)
                 }
 
                 logger.debug("[\(request.httpMethod ?? "")] \(request.url?.absoluteString ?? "")")
@@ -89,53 +89,53 @@ public actor NetworkClient: ClientProtocol {
             }
         } catch let error as URLError {
             logger.error("URLError: \(error.code.rawValue) - \(error.localizedDescription)")
-            throw NetworkError.url(error)
-        } catch let error as NetworkError {
+            throw ClientError.url(error)
+        } catch let error as ClientError {
             logger.error("NetworkError: \(error.status.rawValue) - \(error.localizedDescription)")
             throw error
         } catch {
             logger.error("UnknownError: \(error.localizedDescription)")
-            throw NetworkError.unknown(error)
+            throw ClientError.unknown(error)
         }
     }
     
     // MARK: - Public API
-    public func data(for request: URLRequest) async throws(NetworkError) -> Data {
+    public func data(for request: URLRequest) async throws(ClientError) -> Data {
         let (result, _) = try await execute(for: request) { delegate in
             try await session.data(for: request, delegate: delegate)
         }
         return result
     }
     
-    public func upload(for request: URLRequest, data: Data) async throws(NetworkError) -> Data {
+    public func upload(for request: URLRequest, data: Data) async throws(ClientError) -> Data {
         let (result, _) = try await execute(for: request) { delegate in
             try await session.upload(for: request, from: data, delegate: delegate)
         }
         return result
     }
     
-    public func upload(for request: URLRequest, url: URL) async throws(NetworkError) -> Data {
+    public func upload(for request: URLRequest, url: URL) async throws(ClientError) -> Data {
         let (result, _) = try await execute(for: request) { delegate in
             try await session.upload(for: request, fromFile: url, delegate: delegate)
         }
         return result
     }
 
-    public func upload(for request: URLRequest, resumeFrom data: Data) async throws(NetworkError) -> Data {
+    public func upload(for request: URLRequest, resumeFrom data: Data) async throws(ClientError) -> Data {
         let (result, _) = try await execute(for: request) { delegate in
             try await session.upload(resumeFrom: data, delegate: delegate)
         }
         return result
     }
     
-    public func download(for request: URLRequest) async throws(NetworkError) -> (url: URL, contentType: String) {
+    public func download(for request: URLRequest) async throws(ClientError) -> (url: URL, contentType: String) {
         let (result, response) = try await execute(for: request) { delegate in
             try await session.download(for: request, delegate: delegate)
         }
         return (result, response.mimeType ?? ContentType.data.value)
     }
     
-    public func download(for request: URLRequest, resumeFrom data: Data) async throws(NetworkError) -> (url: URL, contentType: String) {
+    public func download(for request: URLRequest, resumeFrom data: Data) async throws(ClientError) -> (url: URL, contentType: String) {
         let (result, response) = try await execute(for: request) { delegate in
             try await session.download(resumeFrom: data, delegate: delegate)
         }

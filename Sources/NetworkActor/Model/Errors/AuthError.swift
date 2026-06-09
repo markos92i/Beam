@@ -13,3 +13,13 @@ public enum AuthError: Error, Sendable {
     case failedToRefreshToken
     case unknown
 }
+
+extension AuthError: CustomNSError {
+    public static var errorDomain: String { "network.AuthError" }
+        
+    public var errorUserInfo: [String: Any] {
+        [
+            NSLocalizedFailureErrorKey: "AuthError: \(self)",
+        ]
+    }
+}

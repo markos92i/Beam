@@ -33,18 +33,16 @@ public actor AuthEngine<T: AuthToken> {
     }
 
     public func invalidate() {
-        if case .ready = state {
-            state = .invalid
-        }
+        state = .invalid
     }
     
     public func clear() {
         state = .empty
+        resumeInit()
         refreshTask?.cancel()
         refreshTask = nil
         waitTask?.cancel()
         waitTask = nil
-        resumeInit()
     }
 
     private func resumeInit() {
