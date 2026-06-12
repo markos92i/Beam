@@ -7,7 +7,7 @@
 
 import Foundation
 
-public enum ClientError: Error {
+public enum ClientError: Error, InfoError {
     case invalidURL
     case invalidResume
     case noResponse
@@ -36,20 +36,21 @@ public enum ClientError: Error {
         if case .http(_, let body) = self { body } else { nil }
     }
     
-    var info: [String: Any] {
+    var info: [String: any Sendable] {
         ["ResponseBody": String(data: body ?? Data(), encoding: .utf8)?.prefix(2000) ?? ""]
     }
-}
 
-extension ClientError: CustomNSError {
-    public static var errorDomain: String { "network.ClientError" }
-        
-    public var errorCode: Int { status.rawValue }
-
-    public var errorUserInfo: [String: Any] {
-        [
-            NSLocalizedDescriptionKey: "ClientError: \(self)", // Main Message
-            NSLocalizedFailureErrorKey: "Status: \(status.rawValue)" // Extras
-        ].merging(info) { $1 }
+    var isRetryable: Bool {
+        switch self {
+        case .url(let error):
+            switch error.code {
+            case .timedOut, .networkConnectionLost, .notConnectedToInternet: true
+            default: false
+            }
+        case .http(let status, _): status.type == .serverError || status == .unauthorized
+        default: false
+        }
     }
 }
+
+

@@ -15,6 +15,7 @@ public struct ServicePayload: Sendable {
     public var headers: [String : String] = [:]
     public var body: HTTPBody? = nil
     public var timeout: TimeInterval = 60
+    public var cacheFile: String? = nil
     
     public init(
         method: HTTPMethod,
@@ -23,7 +24,8 @@ public struct ServicePayload: Sendable {
         params: [URLQueryItem] = [],
         headers: [String : String] = [:],
         body: HTTPBody? = nil,
-        timeout: TimeInterval = 60
+        timeout: TimeInterval = 60,
+        cacheFile: String? = nil
     ) {
         self.method = method
         self.host = host
@@ -32,6 +34,7 @@ public struct ServicePayload: Sendable {
         self.headers = headers
         self.body = body
         self.timeout = timeout
+        self.cacheFile = cacheFile
     }
 }
 

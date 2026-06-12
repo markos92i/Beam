@@ -5,11 +5,15 @@
 //  Created by Marcos del Castillo Camacho on 12/3/25.
 //
 
-import SwiftUI
+import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
     public let id = UUID().uuidString
-    
+
+    private let log: Logger
     public let client: any ClientProtocol
     public let auth: (any AuthProtocol)?
     public let crash: (any CrashProtocol)?
@@ -20,7 +24,7 @@ public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
     public var progress: AsyncStream<Progress> { client.progress }
 
     public init(
-        client: any ClientProtocol = NetworkClient(session: URLSession.shared),
+        client: any ClientProtocol = Client(session: URLSession.shared),
         auth: (any AuthProtocol)? = nil,
         crash: (any CrashProtocol)? = nil,
         serializer: any SerializerProtocol = Serializer(),
@@ -33,23 +37,28 @@ public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
         self.serializer = serializer
         self.config = config
         self.api = api
+        self.log = Logger(output: crash)
     }
     
     // MARK: - Throwing Core Implementation
     private func perform<Output>(
-        operation: (URLRequest, Data?) async throws -> Output
+        operation: (URLRequest) async throws -> Output
     ) async throws(ServiceError<Failure>) -> Output {
         for attempt in 0...config.maxRetries {
             do {
-                return try await operation(try await request, try request.httpBody)
+                #if DEBUG
+                if attempt > 0 { log.retry(attempt: attempt, maxRetries: config.maxRetries) }
+                #endif
+                let result = try await operation(try await request)
+                return result
             } catch let error as ClientError {
-                guard error.status == .unauthorized, !(attempt == config.maxRetries), let auth else {
-                    throw await mapError(error)
-                }
+                if error.status == .unauthorized { await auth?.invalidate() }
                 
-                await auth.invalidate()
+                guard attempt < config.maxRetries, error.isRetryable else {
+                    throw await mapError(error, attempt: attempt)
+                }
             } catch {
-                throw await mapError(error)
+                throw await mapError(error, attempt: attempt)
             }
         }
         
@@ -57,44 +66,46 @@ public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
     }
     
     public func data() async throws(ServiceError<Failure>) -> Success {
-        try await perform() { request, data in
+        if let cacheFile = api.cacheFile { return try await file(file: cacheFile) }
+        return try await perform() { request in
+            var request = request
+            request.httpBody = try api.data(with: serializer)
             let response: Data = try await client.data(for: request)
             return try serializer.decode(data: response)
         }
     }
     
     public func upload() async throws(ServiceError<Failure>) -> Success {
-        try await perform() { request, data in
-            guard let data else { throw ServiceError<Failure>.missingUploadData }
-
-            let response: Data = try await client.upload(for: request, data: data)
+        try await perform() { request in
+            guard let body = try api.data(with: serializer) else { throw ServiceError<Failure>.missingUploadData }
+            let response: Data = try await client.upload(for: request, data: body)
             return try serializer.decode(data: response)
         }
     }
     
     public func upload(url: URL) async throws(ServiceError<Failure>) -> Success {
-        try await perform() { request, _ in
+        try await perform() { request in
             let response: Data = try await client.upload(for: request, url: url)
             return try serializer.decode(data: response)
         }
     }
 
     public func upload(resumeFrom data: Data) async throws(ServiceError<Failure>) -> Success {
-        try await perform() { request, _ in
+        try await perform() { request in
             let response: Data = try await client.upload(for: request, resumeFrom: data)
             return try serializer.decode(data: response)
         }
     }
     
     public func download() async throws(ServiceError<Failure>) -> URL {
-        try await perform() { request, _ in
+        try await perform() { request in
             let response = try await client.download(for: request)
             return try FileUtils.copy(url: response.url, to: .cachesDirectory, contentType: response.contentType)
         }
     }
     
     public func download(resumeFrom data: Data) async throws(ServiceError<Failure>) -> URL {
-        try await perform() { request, _ in
+        try await perform() { request in
             let response = try await client.download(for: request, resumeFrom: data)
             return try FileUtils.copy(url: response.url, to: .cachesDirectory, contentType: response.contentType)
         }
@@ -108,7 +119,7 @@ public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
             let data = try Data(contentsOf: url)
             return try serializer.decode(data: data)
         } catch {
-            throw await mapError(error)
+            throw await mapError(error, attempt: 0)
         }
     }
         
@@ -161,7 +172,6 @@ extension Service {
             }
 
             request.allHTTPHeaderFields = headers
-            request.httpBody = try api.data(with: serializer)
             request.timeoutInterval = api.timeout
             
             return request
@@ -171,36 +181,59 @@ extension Service {
 
 // MARK: Error management and reporting
 extension Service {
-    private func mapError(_ error: Error) async -> ServiceError<Failure> {
-        let serviceError: ServiceError<Failure>
-        var extraInfo: [String: Any] = [:]
-        extraInfo["Endpoint"] = "[\(api.method.description)] \(api.url?.absoluteString ?? "Invalid URL")"
-        extraInfo["RequestBody"] = String(data: (try? api.data(with: serializer)) ?? Data(), encoding: .utf8)?.prefix(2000) ?? "N/A"
+    private func mapError(_ error: Error, attempt: Int) async -> ServiceError<Failure> {
+        let serviceError = parseError(error)
+        
+        guard !serviceError.isSilent else { return serviceError }
 
-        switch error {
-        case let error as ServiceError<Failure>:
-            serviceError = error
-        case let error as ClientError:
-            let body: Failure? = if let data = error.body, let body: Failure? = try? serializer.decode(data: data) { body } else { nil }
-            serviceError = ServiceError(from: error, body: body)
-            extraInfo.merge(error.info) { $1 }
-        case let error as URLError:
-            serviceError = ServiceError(from: ClientError.url(error))
-        case let error as AuthError:
-            serviceError = ServiceError(from: error)
-        case let error as FileError:
-            serviceError = ServiceError(from: error)
-        case let error as SerializerError:
-            serviceError = ServiceError(from: error)
-            extraInfo.merge(error.info) { $1 }
-        default:
-            serviceError = .unknown
-        }
-        
-        guard serviceError != .cancelled else { return serviceError }
-        
-        crash?.report(error: serviceError, userInfo: extraInfo)
+        log.error(serviceError, source: error, attempt: attempt)
+        reportError(serviceError, error: error, attempt: attempt)
         
         return serviceError
+    }
+
+    private func parseError(_ error: Error) -> ServiceError<Failure> {
+        switch error {
+        case let error as ServiceError<Failure>:
+            return error
+        case let error as ClientError:
+            let body: Failure? = if let data = error.body, let decoded: Failure? = try? serializer.decode(data: data) { decoded } else { nil }
+            return ServiceError(from: error, body: body)
+        case let error as URLError:
+            return ServiceError(from: ClientError.url(error))
+        case let error as AuthError:
+            return ServiceError(from: error)
+        case let error as FileError:
+            return ServiceError(from: error)
+        case let error as SerializerError:
+            return ServiceError(from: error)
+        default:
+            return .unknown
+        }
+    }
+
+    private func reportError(_ serviceError: ServiceError<Failure>, error: Error, attempt: Int) {
+        var info: [String: Any] = [
+            "Method": api.method.description,
+            "Host": api.host,
+            "Path": api.path,
+            "Attempt": attempt
+        ]
+
+        if let error = error as? InfoError { info.merge(error.info) { $1 } }
+
+        let sanitizedPath = api.path.replacing(/\/\d+/, with: "/{id}")
+        let description: String = switch error {
+        case let error as SerializerError: error.info.values.first.map { "\($0)" } ?? serviceError.name
+        case let error as ClientError: error.description ?? serviceError.name
+        default: serviceError.name
+        }
+
+        let reportError = NSError(
+            domain: "\(api.method) \(sanitizedPath) — \(serviceError.name)",
+            code: serviceError.id,
+            userInfo: info.merging([NSLocalizedDescriptionKey: description]) { $1 }.mapValues { "\($0)" }
+        )
+        crash?.report(error: reportError, userInfo: info)
     }
 }

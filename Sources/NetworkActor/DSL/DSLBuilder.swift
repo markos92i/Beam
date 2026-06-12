@@ -16,9 +16,22 @@ public struct DSLBuilder {
     public static func buildEither(second component: [RequestComponent]) -> [RequestComponent] { component }
     public static func buildArray(_ components: [[RequestComponent]]) -> [RequestComponent] { components.flatMap { $0 } }
     
-    public static func buildFinalResult<Success, Failure>(_ components: [RequestComponent]) -> Service<Success, Failure> {
+    public static func buildFinalResult<Success, Failure>(_ components: [RequestComponent]) -> DataTask<Success, Failure> {
+        DataTask(service: buildService(from: components))
+    }
+
+    public static func buildFinalResult<Success, Failure>(_ components: [RequestComponent]) -> UploadTask<Success, Failure> {
+        UploadTask(service: buildService(from: components))
+    }
+
+    public static func buildFinalResult<Failure>(_ components: [RequestComponent]) -> DownloadTask<Failure> {
+        DownloadTask(service: buildService(from: components))
+    }
+    
+    public static func buildFinalResult(_ components: [RequestComponent]) -> [RequestComponent] { components }
+    
+    private static func buildService<Success, Failure>(from components: [RequestComponent]) -> Service<Success, Failure> {
         var state = RequestBuilderState()
-        
         components.forEach { $0.apply(to: &state) }
         
         let payload = ServicePayload(
@@ -28,7 +41,8 @@ public struct DSLBuilder {
             params: state.params,
             headers: state.headers,
             body: state.body,
-            timeout: state.timeout
+            timeout: state.timeout,
+            cacheFile: state.cacheFile
         )
         
         return Service<Success, Failure>(
@@ -40,8 +54,6 @@ public struct DSLBuilder {
             api: payload
         )
     }
-    
-    public static func buildFinalResult(_ components: [RequestComponent]) -> [RequestComponent] { components }
 }
 
 // MARK: - Core Protocol

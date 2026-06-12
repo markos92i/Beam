@@ -7,19 +7,22 @@
 
 import Foundation
 
-public enum AuthError: Error, Sendable {
+public enum AuthError: Error, InfoError, Sendable, Equatable {
     case missingToken
     case invalidCredentials
     case failedToRefreshToken
-    case unknown
-}
+    case cancelled
 
-extension AuthError: CustomNSError {
-    public static var errorDomain: String { "network.AuthError" }
-        
-    public var errorUserInfo: [String: Any] {
-        [
-            NSLocalizedFailureErrorKey: "AuthError: \(self)",
-        ]
+    var info: [String: any Sendable] {
+        switch self {
+        case .missingToken:
+            ["AuthError": "􂅦 No token available — user may not be logged in"]
+        case .invalidCredentials:
+            ["AuthError": "􀎡 Credentials rejected by server"]
+        case .failedToRefreshToken:
+            ["AuthError": "􀎡 Token refresh failed — session expired"]
+        case .cancelled:
+            ["AuthError": "􀁠 Authentication cancelled"]
+        }
     }
 }

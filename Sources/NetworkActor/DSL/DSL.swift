@@ -69,4 +69,9 @@ public enum DSL {
         let config: ServiceConfig
         public func apply(to builder: inout RequestBuilderState) { builder.config = config }
     }
+
+    public struct Cache: RequestComponent {
+        let file: String
+        public func apply(to builder: inout RequestBuilderState) { builder.cacheFile = file }
+    }
 }

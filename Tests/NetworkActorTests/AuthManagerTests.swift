@@ -1,103 +1,69 @@
 //
 //  AuthManagerTests.swift
-//  Randstad Empleo
-//
-//  Created by Marcos del Castillo Camacho on 13/05/2026.
+//  NetworkActorTests
 //
 
 import Testing
 import Foundation
 import NetworkActor
 
+@Suite("AuthManager (legacy concurrency stress)")
 struct AuthManagerTests {
-    @Test("Test concurrent token requests with a simulated keychain access delay")
+
+    @Test("100 concurrent requests while loading → all get the set token")
     func testValidTokenRecovery() async throws {
         let manager = AuthManagerStub()
         let expectedTokenId = "valid-token-1234"
         let totalRequests = 100
-           
-        var results: [TokenStub] = []
 
-        try await withThrowingTaskGroup(of: TokenStub.self) { group in
+        let tokens = try await withThrowingTaskGroup(of: TestToken.self) { group in
             for _ in 0..<totalRequests {
                 group.addTask { try await manager.token }
             }
-
             try await Task.sleep(for: .milliseconds(500))
+            await manager.set(token: TestToken(id: expectedTokenId, isValid: true))
+            return try await group.reduce(into: [TestToken]()) { $0.append($1) }
+        }
 
-            let initialToken = TokenStub(id: expectedTokenId, date: .now, expiration: TimeInterval(3600))
-            await manager.set(token: initialToken)
-            
-            for try await token in group {
-                results.append(token)
-            }
-        }
-        
-        #expect(results.count == totalRequests)
-        
-        for token in results {
-            #expect(token.id == expectedTokenId)
-        }
+        #expect(tokens.count == totalRequests)
+        #expect(tokens.allSatisfy { $0.id == expectedTokenId })
     }
-    
-    @Test("Test concurrent token requests")
+
+    @Test("100 concurrent requests with expired token → all get the refreshed token")
     func testInvalidTokenRecovery() async throws {
         let manager = AuthManagerStub()
-        let expectedTokenId = "new-token"
         let totalRequests = 100
-           
-        var results: [TokenStub] = []
 
-        try await withThrowingTaskGroup(of: TokenStub.self) { group in
+        let tokens = try await withThrowingTaskGroup(of: TestToken.self) { group in
             for _ in 0..<totalRequests {
                 group.addTask { try await manager.token }
             }
-
             try await Task.sleep(for: .milliseconds(500))
+            await manager.set(token: TestToken(id: "old-token", isValid: false))
+            return try await group.reduce(into: [TestToken]()) { $0.append($1) }
+        }
 
-            let initialToken = TokenStub(id: "old-token", date: .distantPast, expiration: TimeInterval(3600))
-            await manager.set(token: initialToken)
-            
-            for try await token in group {
-                results.append(token)
-            }
-        }
-        
-        #expect(results.count == totalRequests)
-        
-        for token in results {
-            #expect(token.id == expectedTokenId)
-        }
+        #expect(tokens.count == totalRequests)
+        #expect(tokens.allSatisfy { $0.id == "new-token" })
     }
-}
-
-struct TokenStub {
-    var id: String
-    var date: Date
-    var expiration: TimeInterval
-}
-
-extension TokenStub: AuthToken {
-    public var isValid: Bool { Date.now < date.addingTimeInterval(expiration) }
 }
 
 actor AuthManagerStub: AuthProtocol {
+    typealias Token = TestToken
+
     static let shared = AuthManagerStub()
-    
-    private lazy var engine = AuthEngine(onRefresh: Self.refresh)
-    
+
+    private lazy var engine = AuthEngine<TestToken>(onRefresh: Self.refresh)
+
     var authHeader: [String: String] { get async throws { ["Authorization": "Bearer \(try await token.id)"] } }
-    var token: TokenStub { get async throws { try await engine.resolveToken() } }
-        
-    func set(token: TokenStub) async { await engine.set(token: token) }
-    
+    var token: TestToken { get async throws { try await engine.resolveToken() } }
+
+    func set(token: TestToken) async { await engine.set(token: token) }
     func invalidate() async { await engine.invalidate() }
-
     func clear() async { await engine.clear() }
-            
-    static func refresh() async throws -> TokenStub {
-        try await Task.sleep(for: .seconds(2))
 
-        return Token(id: "new-token", date: .now, expiration: 3600)
+    static func refresh() async throws -> TestToken {
+        try await Task.sleep(for: .seconds(2))
+        return TestToken(id: "new-token", isValid: true)
     }
 }

@@ -37,5 +37,6 @@ public func Timeout(_ interval: TimeInterval) -> DSL.Timeout { .init(interval: i
 public func Use(_ client: any ClientProtocol) -> DSL.Use { .init(client: client) }
 public func Auth(_ auth: any AuthProtocol) -> DSL.Auth { .init(auth: auth) }
 public func Crash(_ crash: any CrashProtocol) -> DSL.Crash { .init(crash: crash) }
-public func Mapper(_ serializer: Serializer) -> DSL.Mapper { .init(serializer: serializer) }
+public func Mapper(_ serializer: SerializerProtocol) -> DSL.Mapper { .init(serializer: serializer) }
 public func Config(_ config: ServiceConfig) -> DSL.Config { .init(config: config) }
+public func Cache(_ file: String) -> DSL.Cache { .init(file: file) }

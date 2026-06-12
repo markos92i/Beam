@@ -7,7 +7,7 @@
 
 import Foundation
 
-public enum SerializerError: Error {
+public enum SerializerError: Error, InfoError {
     case unsuported
     case incorrect
     case encoding(Error, info: [String: any Sendable])
@@ -18,7 +18,7 @@ public enum SerializerError: Error {
         
         switch encodingError {
         case .invalidValue(let value, let context):
-            info["EncodingError"] = "invalidValue(value: \(value), path: \(context.formattedPath))"
+            info["EncodingError"] = context.formattedTree(error: "invalidValue", detail: "\(type(of: value)) 􀰌 􀃰 could not encode")
         @unknown default:
             info["EncodingError"] = "unknown"
         }
@@ -31,13 +31,13 @@ public enum SerializerError: Error {
         
         switch decodingError {
         case .typeMismatch(let type, let context):
-            info["DecodingError"] = "typeMismatch(type: \(type), path: \(context.formattedPath), description: \(context.debugDescription))"
+            info["DecodingError"] = context.formattedTree(error: "typeMismatch", detail: "\(type) 􀰌 􀃰 wrong type")
         case .valueNotFound(let type, let context):
-            info["DecodingError"] = "valueNotFound(type: \(type), path: \(context.formattedPath), description: \(context.debugDescription))"
+            info["DecodingError"] = context.formattedTree(error: "valueNotFound", detail: "\(type) 􀰌 􀃰 nil")
         case .keyNotFound(let key, let context):
-            info["DecodingError"] = "keyNotFound(key: \"\(key.stringValue)\", path: \(context.formattedPath), description: \(context.debugDescription))"
+            info["DecodingError"] = context.formattedTree(error: "keyNotFound", detail: "\"\(key.stringValue)\" 􀃰 missing")
         case .dataCorrupted(let context):
-            info["DecodingError"] = "dataCorrupted(path: \(context.formattedPath), description: \(context.debugDescription))"
+            info["DecodingError"] = context.formattedTree(error: "dataCorrupted", detail: context.debugDescription)
         @unknown default:
             info["DecodingError"] = "unknown"
         }
@@ -59,23 +59,78 @@ extension SerializerError {
 
 private extension DecodingError.Context {
     var formattedPath: String {
-        codingPath.compactMap { $0.stringValue }.joined(separator: ".")
+        var result = ""
+        for key in codingPath {
+            if let index = key.intValue {
+                result += "[\(index)]"
+            } else {
+                if !result.isEmpty { result += "." }
+                result += key.stringValue
+            }
+        }
+        return result
+    }
+
+    func formattedTree(error: String, detail: String) -> String {
+        let indent = "    "
+        var lines = ["􀺾 \(error)"]
+        var segments: [String] = []
+
+        // Build segments merging array indices with previous key
+        for key in codingPath {
+            if let index = key.intValue {
+                if let last = segments.last {
+                    segments[segments.count - 1] = "\(last)[\(index)]"
+                } else {
+                    segments.append("[\(index)]")
+                }
+            } else {
+                segments.append(key.stringValue)
+            }
+        }
+
+        // Print tree with last segment including detail
+        for (i, segment) in segments.enumerated() {
+            let prefix = String(repeating: indent, count: i + 1)
+            if i == segments.count - 1 {
+                lines.append("\(prefix)\(segment): \(detail)")
+            } else {
+                lines.append("\(prefix)\(segment):")
+            }
+        }
+
+        return lines.joined(separator: "\n")
     }
 }
 
 private extension EncodingError.Context {
-    var formattedPath: String {
-        codingPath.compactMap { $0.stringValue }.joined(separator: ".")
+    func formattedTree(error: String, detail: String) -> String {
+        let indent = "    "
+        var lines = ["􀺾 \(error)"]
+        var segments: [String] = []
+
+        for key in codingPath {
+            if let index = key.intValue {
+                if let last = segments.last {
+                    segments[segments.count - 1] = "\(last)[\(index)]"
+                } else {
+                    segments.append("[\(index)]")
+                }
+            } else {
+                segments.append(key.stringValue)
+            }
+        }
+
+        for (i, segment) in segments.enumerated() {
+            let prefix = String(repeating: indent, count: i + 1)
+            if i == segments.count - 1 {
+                lines.append("\(prefix)\(segment): \(detail)")
+            } else {
+                lines.append("\(prefix)\(segment):")
+            }
+        }
+
+        return lines.joined(separator: "\n")
     }
 }
 
-extension SerializerError: CustomNSError {
-    public static var errorDomain: String { "network.SerializerError" }
-        
-    public var errorUserInfo: [String: Any] {
-        [
-            NSLocalizedDescriptionKey: "SerializerError: \(self)", // Main Message
-            "ErrorType": String(describing: type(of: self)) // Extras
-        ].merging(info) { $1 }
-    }
-}
