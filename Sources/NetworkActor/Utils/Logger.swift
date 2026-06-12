@@ -76,10 +76,14 @@ struct Logger {
     // MARK: - Headers
 
     private func formatHeaders(_ headers: [String: String]) -> String {
-        let icons = headers
-            .sorted { headerIcon($0.key) != "􀠩" && headerIcon($1.key) == "􀠩" }
-            .map { headerIcon($0, value: $1) }
-        return "􁒠 Header: [\(icons.joined(separator: ", "))]"
+        let known = headers.compactMap { key, value -> String? in
+            let icon = headerIcon(key, value: value)
+            return icon != "􀠩" ? icon : nil
+        }
+        let others = headers.count - known.count
+        let suffix = others > 0 ? "+\(others)" : nil
+        let parts = known + [suffix].compactMap { $0 }
+        return "􁒠 Header: [\(parts.joined(separator: ", "))]"
     }
 
     private func headerIcon(_ key: String, value: String = "") -> String {
