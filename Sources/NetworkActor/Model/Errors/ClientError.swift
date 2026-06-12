@@ -40,6 +40,24 @@ public enum ClientError: Error, InfoError {
         ["ResponseBody": String(data: body ?? Data(), encoding: .utf8)?.prefix(2000) ?? ""]
     }
 
+    var underlyingDescription: String? {
+        switch self {
+        case .url(let error): error.localizedDescription
+        case .unknown(let error): error.localizedDescription
+        default: nil
+        }
+    }
+
+    var logLines: (subtitle: String?, detail: [String]) {
+        if let body, let text = String(data: body, encoding: .utf8) {
+            return (nil, ["􁒡 \(text.prefix(200))"])
+        }
+        if let desc = underlyingDescription {
+            return (nil, ["􀺾 \(desc)"])
+        }
+        return (nil, [])
+    }
+
     var isRetryable: Bool {
         switch self {
         case .url(let error):

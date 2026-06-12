@@ -82,7 +82,7 @@ struct RetryTests {
         do {
             _ = try await RetryEndpoint(session: session).call()
             #expect(Bool(false))
-        } catch let error as ServiceError<Void> {
+        } catch {
             #expect(error.status?.rawValue == 503)
             #expect(await counter.value == 3)
         }

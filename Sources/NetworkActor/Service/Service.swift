@@ -46,9 +46,7 @@ public struct Service<Success: Sendable, Failure: Sendable>: Sendable {
     ) async throws(ServiceError<Failure>) -> Output {
         for attempt in 0...config.maxRetries {
             do {
-                #if DEBUG
                 if attempt > 0 { log.retry(attempt: attempt, maxRetries: config.maxRetries) }
-                #endif
                 let result = try await operation(try await request)
                 return result
             } catch let error as ClientError {
@@ -234,6 +232,6 @@ extension Service {
             code: serviceError.id,
             userInfo: info.merging([NSLocalizedDescriptionKey: description]) { $1 }.mapValues { "\($0)" }
         )
-        crash?.report(error: reportError, userInfo: info)
+        crash?.report(error: reportError, info: info)
     }
 }

@@ -107,8 +107,8 @@ extension ServiceError {
 
     var icon: String {
         switch self {
-        case .encode, .decode: "􀙄"
-        case .unsupportedType, .typeMismatch: "􀥭"
+        case .encode, .decode: "􀃮"
+        case .unsupportedType, .typeMismatch: "􀭉"
         case .http: "􀘯"
         case .missingToken, .tokenExpired: "􂅦"
         case .invalidURL, .invalidFormat: "􀺾"
@@ -120,6 +120,16 @@ extension ServiceError {
         case .storage: "􁘥"
         case .missingUploadData: "􀈂"
         case .unknown: "􀁜"
+        }
+    }
+
+    var detail: String? {
+        switch self {
+        case .invalidURL: "Could not construct a valid URL from host and path"
+        case .invalidFormat: "The response format is not valid"
+        case .noResponse: "Server did not return an HTTP response"
+        case .missingUploadData: "Upload body is empty — no data to send"
+        default: nil
         }
     }
 }

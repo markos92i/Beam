@@ -16,13 +16,13 @@ public enum AuthError: Error, InfoError, Sendable, Equatable {
     var info: [String: any Sendable] {
         switch self {
         case .missingToken:
-            ["AuthError": "􂅦 No token available — user may not be logged in"]
+            ["AuthError": "No token available — user may not be logged in"]
         case .invalidCredentials:
-            ["AuthError": "􀎡 Credentials rejected by server"]
+            ["AuthError": "Credentials rejected by server"]
         case .failedToRefreshToken:
-            ["AuthError": "􀎡 Token refresh failed — session expired"]
+            ["AuthError": "Token refresh failed — session expired"]
         case .cancelled:
-            ["AuthError": "􀁠 Authentication cancelled"]
+            ["AuthError": "Authentication cancelled"]
         }
     }
 }

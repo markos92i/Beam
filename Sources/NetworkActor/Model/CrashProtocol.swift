@@ -8,7 +8,7 @@
 import Foundation
 
 public protocol CrashProtocol: Sendable {
-    func report(error: Error, userInfo: [String: Any])
+    func report(error: Error, info: [String: Any])
     func log(_ output: String)
 }
 

@@ -50,27 +50,31 @@ struct Logger {
 
     func error(_ serviceError: ServiceError<some Sendable>, source: Error, attempt: Int) {
         let context = attempt > 0 ? " [attempt \(attempt)]" : ""
-        var lines = ["", "􀇾 Error:    [\(serviceError.icon) \(serviceError.name)\(context)]"]
 
-        if let detail = (source as? InfoError)?.logDetail {
-            lines.append(contentsOf: detail)
+        let (subtitle, detail): (String?, [String]) = if let info = source as? InfoError {
+            info.logLines
+        } else if let fallback = serviceError.detail {
+            (nil, ["􀺾 \(fallback)"])
+        } else {
+            (nil, [])
         }
 
+        let sub = subtitle.map { ": \($0)" } ?? ""
+        var lines = ["", "􀇾 Error:    [\(serviceError.icon) \(serviceError.name)\(sub)\(context)]"]
+        lines.append(contentsOf: detail)
         lines.append("")
-        crash?.log(lines.doublePipe)
+        crash?.log(lines.doublePipe + "\n")
     }
 
     func retry(attempt: Int, maxRetries: Int) {
-        emit("│ ↻ Retry \(attempt)/\(maxRetries)")
+        emit("│ 􀅈 Retry \(attempt)/\(maxRetries) ↓")
     }
 
     // MARK: - Output
 
     private func emit(_ message: String) {
-        #if DEBUG
         guard Self.enabled else { return }
-        print(message)
-        #endif
+        print(message + "\n")
     }
 
     // MARK: - Headers
@@ -106,22 +110,6 @@ struct Logger {
 }
 
 // MARK: - Helpers
-
-private extension InfoError {
-    var logDetail: [String]? {
-        switch self {
-        case let error as SerializerError:
-            guard let detail = error.info["DecodingError"] ?? error.info["EncodingError"] else { return nil }
-            return "\(detail)".split(separator: "\n").map(String.init)
-        case let error as ClientError where error.body != nil:
-            guard let body = error.body, let text = String(data: body, encoding: .utf8) else { return nil }
-            return ["􀄵 \(text.prefix(200))"]
-        default:
-            guard let detail = info.values.first else { return nil }
-            return ["􀄵 \(detail)"]
-        }
-    }
-}
 
 private extension Data {
     var isJSON: Bool { first == 0x7B || first == 0x5B }
