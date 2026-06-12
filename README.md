@@ -1,127 +1,279 @@
-# Declarative Network Layer (DSL HTTP Client)
+# NetworkActor
 
-This module implements the core network communication engine for the application. It has been built using a **declarative, value-oriented (`struct`) approach** powered by Swift's `resultBuilders`. 
-
-The system guarantees type safety, strict dependency inversion, complete isolation against global naming collisions, and compile-time validation rules.
+A declarative, type-safe networking layer for Swift built with `@resultBuilder`. Compile-time validation, typed endpoints, structured error handling, and beautiful console logging.
 
 ---
 
-## 🎯 Architecture Pillars
+## Defining Endpoints
 
-### 1. Compile-Time Validation (Zero Runtime Routing Errors)
-The DSL utilizes static type constraints. The `DSLBuilder` enforces by signature that the very first element of the declarative block must be an HTTP method (`DSL.Method`). If a developer attempts to construct a request and forgets the verb (`Get`, `Post`, etc.), **Xcode will stop compilation in real time**, preventing human errors from reaching production.
-
-### 2. Robust Data Mapping (Mapper)
-The transformation of raw network bytes into domain models is managed via the **`Mapper`** component (aligned with industry standards found in major frameworks like Alamofire or Moya). The underlying `Serializer` has been hardened by removing optional returns: it guarantees a strongly-typed result or explicitly throws `.unsupported` or `.incorrect` exceptions (the latter when physical bytes do not match the inferred generic type).
-
----
-
-## 🧬 Data Flow Architecture
-
-When `.build()` is invoked on a `RequestBuilder`, the immutable configuration tree is processed through the following hierarchy:
-
----
-
-## 🛠️ DSL Components Reference
-
-### HTTP Methods (Mandatory on the first line)
-* `Get(host:path:)`, `Post(host:path:)`, `Put(host:path:)`, `Delete(host:path:)`, `Patch(host:path:)`, `Head(host:path:)`, `Options(host:path:)`, `Connect(host:path:)`, `Trace(host:path:)`.
-
-### Request Modifiers
-* `Header(_ key: String, value: String)`: Appends an individual key-value header.
-* `Header(_ dictionary: [String: String])`: Dynamically merges an entire dictionary of base configurations (e.g., `APIConstants.headers`).
-* `Query(_ name: String, value: String?)`: Sequentially appends a `URLQueryItem`.
-* `Body`: Syntax namespace to attach request payloads via `Body.json(Sendable)`, `Body.data(Data)`, or `Body.multipart(MultipartForm)`.
-* `Timeout(_ interval: TimeInterval)`: Sets the maximum request execution time (defaults to 60 seconds).
-
-### Infrastructure & Injection Components
-* `Use(any NetworkProtocol)`: Overrides the default network client (ideal for injecting `SSL Pinning` certificates or custom `MockSession` environments).
-* `Config(ServiceConfig)`: Injects service policies and configurations.
-* `Mapper(Serializer)`: Attaches a serializer with custom encoding/decoding strategies (e.g., Unix timestamps or *snake_case* keys).
-* `Auth(any AuthProtocol)`: Injects the session/authentication token manager.
-* `Crash(any CrashProtocol)`: Injects the analytical crash and error reporter.
-
----
-
-## 🚀 Usage Guide
-
-### 1. Standard Service Implementation
-
-Endpoints can be encapsulated into structures conforming to `Endpoint`. This isolates networking logic completely from the Presentation Layer.
+Endpoints conform to `Endpoint` and declare their operation type via `DataTask`, `UploadTask`, or `DownloadTask`:
 
 ```swift
-import Foundation
+enum API {
+    struct Search: Endpoint {
+        let page: Int
 
-struct DeleteService: Endpoint {
-    let id: String
-    
-    var service: Service<Void, ErrorDto> {
-        // 1. HTTP Method MUST be on the first line (Real-time compilation validation)
-        Delete(URLs.api, "/users/\(id)")
-        
-        // 2. Merged headers (Accepts full dictionaries)
-        Header([["Header1": "Value1"], ["Header2": "Value1"]])
-        Header("X-Device-Client", value: "iOS")
-        
-        // 3. Network infrastructure with custom SSL Pinning certificates
-        Use(NetworkClient(certificates: [CertificateData]))
-        
-        // 4. Configuration & Timeouts
-        Config(.standard)
-        Timeout(30)
-        
-        // 5. Architectural dependency injection
-        Auth(AuthManager.shared)
-        Crash(CrashManager.shared)
-        
-        // 6. Custom serializer (for parsing JSON or any other type you want out of the included functionality)
-        Mapper(Serializer())
+        var task: DataTask<[ItemDto], AppError> {
+            Get(AppConfig.baseURL, "/items")
+            Query("page", value: "\(page)")
+            Header(AppConfig.headers)
+            Use(Client(certificates: AppConfig.certificates))
+            Auth(AuthManager.shared)
+            Crash(CrashManager.shared)
+        }
+    }
+
+    struct Download: Endpoint {
+        let code: String
+
+        var task: DownloadTask<AppError> {
+            Get(AppConfig.baseURL, "/documents/\(code)")
+            Header(AppConfig.headers)
+            Auth(AuthManager.shared)
+            Crash(CrashManager.shared)
+        }
+    }
+}
+
+enum MediaAPI {
+    struct Upload: Endpoint {
+        let url: URL
+
+        var task: UploadTask<Void, AppError> {
+            Put(AppConfig.baseURL, "/media/upload")
+            Body(.multipart(.init(media: [.init(url: url, key: "file")])))
+            Auth(AuthManager.shared)
+            Crash(CrashManager.shared)
+        }
     }
 }
 ```
 
-### 2. AuthManager Example
+---
 
-If you want the network layer can manage token renovation by itself passing your AuthManager and it will also add the authHeaders to the calls that use it automatically.
+## Calling Endpoints
 
-swift
+All endpoints use `.call()` — the task type determines the underlying operation:
+
+```swift
+// Data request
+let offers = try await API.Search(page: 0).call()
+
+// Download
+let file = try await API.Download(code: "ABC").call()
+
+// Upload with progress
+let task = MediaAPI.Upload(url: fileURL)
+for await progress in task.progress { updateUI(progress) }
+try await task.call()
+
+// Cancel
+await task.cancel()
 ```
+
+---
+
+## Task Types
+
+| Type | Operation | Return |
+|------|-----------|--------|
+| `DataTask<Success, Failure>` | `URLSession.data` | Decoded `Success` |
+| `UploadTask<Success, Failure>` | `URLSession.upload` | Decoded `Success` |
+| `DownloadTask<Failure>` | `URLSession.download` | `URL` to file |
+
+The compiler enforces that you can only call `.call()` — you cannot accidentally call upload on a DataTask or download on an UploadTask.
+
+---
+
+## DSL Components
+
+```swift
+// HTTP Methods (first line, mandatory)
+Get(host, path)
+Post(host, path)
+Put(host, path)
+Delete(host, path)
+Patch(host, path)
+
+// Request modifiers
+Header("Key", value: "Value")
+Header(["Key1": "Value1", "Key2": "Value2"])
+Query("name", value: "value")
+Query([URLQueryItem(name: "a", value: "1")])
+Body(.json(encodable))
+Body(.data(rawData))
+Body(.multipart(form))
+Timeout(30)
+
+// Infrastructure
+Use(Client(session:, certificates:, crash:))
+Auth(authManager)
+Crash(crashManager)
+Config(ServiceConfig(maxRetries: 2))
+```
+
+---
+
+## Auth Manager
+
+The library handles token refresh automatically. Implement `AuthProtocol`:
+
+```swift
 actor AuthManager: AuthProtocol {
     static let shared = AuthManager()
-    
-    private lazy var engine = AuthEngine(onRefresh: Self.refresh)
-    
-    var authHeader: [String: String] { get async throws { ["Authorization": "Bearer \(try await token.id)"] } }
-    var token: Token { get async throws { try await engine.resolveToken() } }
-        
-    func set(token: Token) async { await engine.set(token: token) }
-    
-    func invalidate() async { await engine.invalidate() }
 
+    private lazy var engine = AuthEngine(onRefresh: Self.refresh)
+
+    var authHeader: [String: String] {
+        get async throws { ["Authorization": "Bearer \(try await token.id)"] }
+    }
+
+    var token: Token { get async throws { try await engine.resolveToken() } }
+
+    func set(token: Token) async { await engine.set(token: token) }
+    func invalidate() async { await engine.invalidate() }
     func clear() async { await engine.clear() }
-            
+
     static func refresh() async throws -> Token {
-        /*
-        Service call to your token refresh service
-         */
-        return Token(id: "token value", date: .now, expiration: 3600)
+        let response = try await AuthService.Refresh().call()
+        return Token(id: response.accessToken, date: .now, expiration: response.expiresIn)
     }
 }
 ```
 
-### 3. CrashManager Example
+`AuthEngine` handles concurrency: multiple simultaneous 401s trigger a single refresh, and all waiting requests resume with the new token.
 
-If you want to print or report to lets say Firebase Crashlytics you can pass a CrashManager to the RequestBuilder and you will receive everything thats reported by the library.
+---
 
-swift
-```
+## Crash & Log Protocol
+
+Implement `CrashProtocol` to receive error reports and formatted logs:
+
+```swift
 struct CrashManager: CrashProtocol {
     static let shared = CrashManager()
-    
-    func report(error: Error, userInfo: [String: Any] = [:]) {
-        // let commonInfo: [String: Any] = ["UserID": Defaults.shared.userID].merging(userInfo) { (a, _) in a }
-        // Crashlytics.crashlytics().record(error: error, userInfo: commonInfo)
-        print("[REPORT] CrashManager: \(error.localizedDescription)\nDetails: \(userInfo)")
+
+    func report(error: Error, userInfo: [String: Any]) {
+        YourCrashService.record(error: error, userInfo: userInfo)
+    }
+
+    func log(_ output: String) {
+        #if DEBUG
+        print(output)
+        #endif
     }
 }
 ```
+
+Disable request/response logs at any time:
+```swift
+Logger.enabled = false
+```
+
+---
+
+## Console Output
+
+### Request
+```
+│ 􀁶 Request: A27B    􀋧 GET    􀎠 https://api.example.com/items?page=0
+│ 􁒠 Header: [􁠱 auth, 􀡅 json, 􀠩, 􀠩, 􀠩]
+```
+
+### Response (success)
+```
+│ 􀁸 Response: A27B    􀅴 200    􀐫 152ms
+│ 􁒠 Header: [􀡅 json, 􀫦 cache, 􀠩, 􀠩, 􀠩]
+│ 􁒡 Body:
+│ {
+│   "data" : [
+│     { "id" : 1, "title" : "Example Item" }
+│   ]
+│ }
+```
+
+### Response (error)
+```
+│ 􀁸 Response: 7C9E    􀁞 500    􀐫 340ms
+│ 􁒠 Header: [􀡅 json, 􀠩, 􀠩]
+│ 􁒡 Body:
+│ {"error":"Internal server error"}
+```
+
+### Service Error (decode)
+```
+║
+║ 􀇾 Error:    [􀙄 decode]
+║ 􀺾 valueNotFound
+║     data:
+║         items[1]:
+║             description: String 􀰌 􀃰 nil
+║
+```
+
+### Retry
+```
+│ ↻ Retry 1/2
+│ 􀁶 Request: A27B    􀋧 GET    ...
+```
+
+---
+
+## Retry Policy
+
+Retries are automatic for transient errors (5xx, timeout, connection lost, 401):
+
+```swift
+Config(ServiceConfig(maxRetries: 2))
+```
+
+- **401** → invalidates token, retries with refreshed auth
+- **5xx / timeout / noConnection** → retries with exponential backoff (200ms, 400ms...)
+- **4xx (non-401) / decode errors** → fails immediately, no retry
+
+---
+
+## Error Types
+
+```swift
+public enum ServiceError<Failure> {
+    // Serialization
+    case encode, decode, unsupportedType, typeMismatch
+
+    // Request
+    case invalidURL, invalidFormat, missingUploadData, missingToken, tokenExpired
+
+    // Network
+    case noConnection, timedOut, serverUnreachable, sslError, noResponse
+
+    // Server
+    case http(status: HTTPStatus, body: Failure?)
+
+    // System
+    case storage, cancelled, unknown
+}
+```
+
+Each error has a unique icon for console identification and is reported to Firebase with a sanitized path:
+```
+GET /api/{id}/settings — decode (1)
+```
+
+---
+
+## SSL Pinning
+
+Pass certificates to the Client. If `certificates` is empty, pinning is disabled:
+
+```swift
+Use(Client(certificates: [myCertData]))  // pinning enabled
+Use(Client())                            // no pinning
+```
+
+---
+
+## Requirements
+
+- iOS 18.0+
+- Swift 6 (strict concurrency)
+- Xcode 26+

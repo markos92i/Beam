@@ -66,3 +66,45 @@ extension ContentType {
     
     public var header: [String: String] { ["Content-Type": value] }
 }
+
+extension ContentType {
+    public var icon: String {
+        switch self {
+        case .json: "􀡅"
+        case .image: "􀏅"
+        case .multipart: "􀏭"
+        case .data: "􀤧"
+        case .text: "􀅒"
+        case .xml: "􀙚"
+        case .pdf: "􀈷"
+        case .urlEncoded: "􀒶"
+        case .custom: "􀠩"
+        }
+    }
+
+    public var label: String {
+        switch self {
+        case .json: "json"
+        case .image(let f): "image/\(f.rawValue)"
+        case .multipart: "multipart"
+        case .data: "stream"
+        case .text: "text"
+        case .xml: "xml"
+        case .pdf: "pdf"
+        case .urlEncoded: "form"
+        case .custom(let v): v
+        }
+    }
+
+    public init(rawHeader: String) {
+        if rawHeader.contains("json") { self = .json(); return }
+        if rawHeader.contains("image") { self = .image(format: .jpeg); return }
+        if rawHeader.contains("multipart") { self = .multipart(boundary: ""); return }
+        if rawHeader.contains("octet-stream") { self = .data; return }
+        if rawHeader.contains("text") { self = .text(); return }
+        if rawHeader.contains("xml") { self = .xml(); return }
+        if rawHeader.contains("pdf") { self = .pdf; return }
+        if rawHeader.contains("urlencoded") { self = .urlEncoded; return }
+        self = .custom(rawHeader)
+    }
+}

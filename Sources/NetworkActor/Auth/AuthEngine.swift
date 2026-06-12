@@ -17,8 +17,8 @@ public actor AuthEngine<T: AuthToken> {
     
     private var state: State = .loading
     
-    private var refreshTask: Task<T, Error>?
-    private var waitTask: Task<T, Error>?
+    private var refreshTask: Task<T, any Error>?
+    private var waitTask: Task<T, any Error>?
     private var initContinuation: CheckedContinuation<Void, Never>?
 
     private let onRefresh: @Sendable () async throws -> T
@@ -33,18 +33,16 @@ public actor AuthEngine<T: AuthToken> {
     }
 
     public func invalidate() {
-        if case .ready = state {
-            state = .invalid
-        }
+        state = .invalid
     }
     
     public func clear() {
         state = .empty
+        resumeInit()
         refreshTask?.cancel()
         refreshTask = nil
         waitTask?.cancel()
         waitTask = nil
-        resumeInit()
     }
 
     private func resumeInit() {
@@ -82,8 +80,11 @@ public actor AuthEngine<T: AuthToken> {
             } catch AuthError.invalidCredentials {
                 self.clear()
                 throw AuthError.invalidCredentials
+            } catch is CancellationError {
+                throw AuthError.cancelled
             } catch {
-                throw AuthError.unknown
+                self.state = .invalid
+                throw AuthError.failedToRefreshToken
             }
         }
         
@@ -97,7 +98,7 @@ public actor AuthEngine<T: AuthToken> {
         let task = Task { () throws -> T in
             defer { waitTask = nil }
             await withCheckedContinuation { initContinuation = $0 }
-            
+            if Task.isCancelled { throw AuthError.cancelled }
             return try await resolveToken()
         }
         

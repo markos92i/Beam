@@ -7,13 +7,13 @@
 
 import Foundation
 
-final class NetworkDelegate: NSObject, URLSessionTaskDelegate {
+final class NetworkDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let certificates: [Data]
     private let onTaskCreated: (@Sendable (URLSessionTask) -> Void)?
-    
+
     init(
         certificates: [Data],
-        onTaskCreated: @escaping (@Sendable (URLSessionTask) -> Void),
+        onTaskCreated: (@Sendable (URLSessionTask) -> Void)? = nil
     ) {
         self.certificates = certificates
         self.onTaskCreated = onTaskCreated
@@ -32,7 +32,7 @@ final class NetworkDelegate: NSObject, URLSessionTaskDelegate {
         guard certificates.isEmpty || certificates.contains(where: { data.isEqual(to: $0) }) else {
             return (.cancelAuthenticationChallenge, nil)
         }
-        
+
         return (.useCredential, URLCredential(trust: trust))
     }
 

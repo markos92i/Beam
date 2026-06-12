@@ -8,17 +8,15 @@
 import Foundation
 
 // MARK: Methods
-public func Get(_ host: String, _ path: String) -> DSL.Method<BodyForbidden> { .init(method: .get, host: host, path: path) }
-public func Delete(_ host: String, _ path: String) -> DSL.Method<BodyForbidden> { .init(method: .delete, host: host, path: path) }
-public func Head(_ host: String, _ path: String) -> DSL.Method<BodyForbidden> { .init(method: .head, host: host, path: path) }
-public func Options(_ host: String, _ path: String) -> DSL.Method<BodyForbidden> { .init(method: .options, host: host, path: path) }
-public func Trace(_ host: String, _ path: String) -> DSL.Method<BodyForbidden> { .init(method: .trace, host: host, path: path) }
-public func Connect(_ host: String, _ path: String) -> DSL.Method<BodyForbidden> { .init(method: .connect, host: host, path: path) }
-
-// 🍎 Métodos mutables (CON Body)
-public func Post(_ host: String, _ path: String) -> DSL.Method<BodyAllowed> { .init(method: .post, host: host, path: path) }
-public func Put(_ host: String, _ path: String) -> DSL.Method<BodyAllowed> { .init(method: .put, host: host, path: path) }
-public func Patch(_ host: String, _ path: String) -> DSL.Method<BodyAllowed> { .init(method: .patch, host: host, path: path) }
+public func Connect(_ host: String, _ path: String) -> DSL.Method { .init(method: .connect, host: host, path: path) }
+public func Get(_ host: String, _ path: String) -> DSL.Method { .init(method: .get, host: host, path: path) }
+public func Post(_ host: String, _ path: String) -> DSL.Method { .init(method: .post, host: host, path: path) }
+public func Put(_ host: String, _ path: String) -> DSL.Method { .init(method: .put, host: host, path: path) }
+public func Delete(_ host: String, _ path: String) -> DSL.Method { .init(method: .delete, host: host, path: path) }
+public func Patch(_ host: String, _ path: String) -> DSL.Method { .init(method: .patch, host: host, path: path) }
+public func Head(_ host: String, _ path: String) -> DSL.Method { .init(method: .head, host: host, path: path) }
+public func Options(_ host: String, _ path: String) -> DSL.Method { .init(method: .options, host: host, path: path) }
+public func Trace(_ host: String, _ path: String) -> DSL.Method { .init(method: .trace, host: host, path: path) }
 
 // MARK: Header
 public func Header(_ key: String, value: String) -> DSL.Header { .init(key, value: value) }
@@ -39,5 +37,6 @@ public func Timeout(_ interval: TimeInterval) -> DSL.Timeout { .init(interval: i
 public func Use(_ client: any ClientProtocol) -> DSL.Use { .init(client: client) }
 public func Auth(_ auth: any AuthProtocol) -> DSL.Auth { .init(auth: auth) }
 public func Crash(_ crash: any CrashProtocol) -> DSL.Crash { .init(crash: crash) }
-public func Mapper(_ serializer: Serializer) -> DSL.Mapper { .init(serializer: serializer) }
+public func Mapper(_ serializer: SerializerProtocol) -> DSL.Mapper { .init(serializer: serializer) }
 public func Config(_ config: ServiceConfig) -> DSL.Config { .init(config: config) }
+public func Cache(_ file: String) -> DSL.Cache { .init(file: file) }
