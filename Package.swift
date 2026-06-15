@@ -1,28 +1,49 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.3
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
 import CompilerPluginSupport
 
 let package = Package(
-    name: "NetworkActor",
+    name: "Beam",
     platforms: [
-       .macOS(.v14), .iOS(.v17),
+       .macOS(.v15), .iOS(.v18),
     ],
     products: [
-        // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
-            name: "NetworkActor",
-            targets: ["NetworkActor"]),
+            name: "Beam",
+            targets: ["Beam"]),
+    ],
+    dependencies: [
+        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.2"),
     ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
+        // Macro implementation (compiler plugin)
+        .macro(
+            name: "BeamMacros",
+            dependencies: [
+                .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
+                .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
+            ]
+        ),
+
+        // Main library
         .target(
-            name: "NetworkActor"),
+            name: "Beam",
+            dependencies: ["BeamMacros"]
+        ),
+
+        // Tests
         .testTarget(
-            name: "NetworkActorTests",
-            dependencies: ["NetworkActor"]
+            name: "BeamTests",
+            dependencies: ["Beam"]
+        ),
+        .testTarget(
+            name: "BeamMacrosTests",
+            dependencies: [
+                "BeamMacros",
+                .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax"),
+            ]
         ),
     ]
 )

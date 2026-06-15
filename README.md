@@ -73,6 +73,82 @@ await task.cancel()
 
 ---
 
+## Streaming with `run()`
+
+`run()` returns an `AsyncStream<RunEvent>` that emits progress updates during the operation and a final `.success` or `.failure` event. Unlike `call()`, it doesn't throw — the error arrives as a typed event.
+
+```swift
+public enum RunEvent<Success, Failure> {
+    case progress(Progress)   // KVO-observable, updates in real time
+    case success(Success)     // typed result
+    case failure(APIError<Failure>)  // typed error
+}
+```
+
+### Single operation
+
+```swift
+state.type = .loading
+for await event in MediaAPI.Upload(url: fileURL).run() {
+    switch event {
+    case .progress(let p): state.progress = p
+    case .success:         state.type = .success
+    case .failure:         state.type = .failure
+    }
+}
+```
+
+### With resume data
+
+```swift
+let service = MediaAPI.Upload(url: fileURL)
+let stream = resumeData != nil ? service.run(resumeFrom: resumeData!) : service.run()
+
+for await event in stream {
+    switch event {
+    case .progress(let p):         state.progress = p
+    case .success:                 state.type = .success
+    case .failure(.cancelled):     state.type = .idle
+    case .failure(let error):      state.type = .failure
+    }
+}
+```
+
+### Multiple operations in parallel — `.parallel()`
+
+`.parallel()` merges multiple streams into one with a combined `Progress` parent (uses Foundation's `Progress.addChild` for automatic aggregation):
+
+```swift
+let streams = [
+    CVsAPI.Upload(url: cvFile).run(),
+    PhotoAPI.Upload(url: photoFile).run()
+]
+
+state.type = .loading
+for await event in streams.parallel() {
+    switch event {
+    case .progress(let p):
+        state.progress = p  // combined progress of all operations
+    case .success(let results):
+        // results[0] = CV result, results[1] = photo result (same order as input)
+        state.type = .success
+    case .failure(let error):
+        // first failure cancels all remaining operations
+        state.type = .failure
+    }
+}
+```
+
+### Available `run()` variants
+
+| Task Type | Variants |
+|-----------|----------|
+| `DataTask` | `run()` |
+| `UploadTask` | `run()`, `run(url:)`, `run(resumeFrom:)` |
+| `DownloadTask` | `run()`, `run(resumeFrom:)` |
+
+---
+
 ## Task Types
 
 | Type | Operation | Return |
@@ -109,7 +185,9 @@ Timeout(30)
 Use(Client(session:, certificates:, crash:))
 Auth(authManager)
 Crash(crashManager)
-Config(ServiceConfig(maxRetries: 2))
+Config(RequestConfig(retry: .resilient, pingInterval: 30))
+Retry(.exponential(base: 1, maxDelay: 10, maxAttempts: 3))
+PingInterval(30)
 ```
 
 ---
@@ -174,17 +252,31 @@ Logger.enabled = false
 
 ## Console Output
 
+Icons identify the message type at a glance. The protocol (`https`/`http`/`wss`/`ws`) is shown separately with a lock icon for secure connections.
+
+| Icon | Meaning |
+|------|---------|
+| 􀁶 | Outgoing (request / send) |
+| 􀁸 | Incoming (response / receive) |
+| 􀀀 | WebSocket open |
+| 􀁠 | WebSocket close |
+| 􀋧 | HTTP method / WebSocket ping |
+| 􁒠 | Headers |
+| 􁒡 | Body |
+| 􀎠 | Secure (https / wss) |
+| 􀎢 | Insecure (http / ws) |
+
 ### Request
 ```
-│ 􀁶 Request: A27B    􀋧 GET    􀎠 https://api.example.com/items?page=0
-│ 􁒠 Header: [􁠱 auth, 􀡅 json, 􀠩, 􀠩, 􀠩]
+│ 􀁶 A27B    􀋧 GET    􀎠 https    api.example.com/items?page=0
+│ 􁒠 [􁠱 auth, 􀡅 json, +3]
 ```
 
 ### Response (success)
 ```
-│ 􀁸 Response: A27B    􀅴 200    􀐫 152ms
-│ 􁒠 Header: [􀡅 json, 􀫦 cache, 􀠩, 􀠩, 􀠩]
-│ 􁒡 Body:
+│ 􀁸 A27B    􀅴 200    􀐫 152ms
+│ 􁒠 [􀡅 json, 􀫦 cache, +2]
+│ 􁒡
 │ {
 │   "data" : [
 │     { "id" : 1, "title" : "Example Item" }
@@ -194,16 +286,28 @@ Logger.enabled = false
 
 ### Response (error)
 ```
-│ 􀁸 Response: 7C9E    􀁞 500    􀐫 340ms
-│ 􁒠 Header: [􀡅 json, 􀠩, 􀠩]
-│ 􁒡 Body:
+│ 􀁸 7C9E    􀁞 500    􀐫 340ms
+│ 􁒠 [􀡅 json, +2]
+│ 􁒡
 │ {"error":"Internal server error"}
+```
+
+### WebSocket
+```
+│ 􀀀 A27B    􀎠 wss    api.example.com/ws/chat
+│ 􁒠 [􁠱 auth, +2]
+│ 
+│ 􀁶 A27B    text    􀐚 128B
+│ 􀁸 A27B    text    􀐚 256B
+│ 􀋧 A27B
+│ 􀁠 A27B    code: 1000
+│ 􀅈 A27B    reconnect 1    delay: 1000ms
 ```
 
 ### Service Error (decode)
 ```
 ║
-║ 􀇾 Error:    [􀙄 decode]
+║ 􀇾 Error:    [􀃮 decode]
 ║ 􀺾 valueNotFound
 ║     data:
 ║         items[1]:
@@ -213,22 +317,55 @@ Logger.enabled = false
 
 ### Retry
 ```
-│ ↻ Retry 1/2
-│ 􀁶 Request: A27B    􀋧 GET    ...
+│ 􀅈 Retry 1/2 ↓
+│ 􀁶 A27B    􀋧 GET    􀎠 https    api.example.com/items?page=0
 ```
 
 ---
 
 ## Retry Policy
 
-Retries are automatic for transient errors (5xx, timeout, connection lost, 401):
+Retries are configured via `RetryPolicy` inside `RequestConfig`. The same policy applies to both HTTP requests (retry on failure) and WebSocket connections (reconnect on disconnect).
+
+### Presets
+
+| Preset | Behavior |
+|--------|----------|
+| `.none` | No retries |
+| `.standard` (default) | 1 immediate retry |
+| `.resilient` | 3 retries with exponential backoff (1s → 2s → 4s, cap 10s) |
+
+### Usage in DSL
 
 ```swift
-Config(ServiceConfig(maxRetries: 2))
+// Default (.standard) — no need to specify anything
+struct GetOffers: Endpoint {
+    var task: DataTask<[Offer], AppError> {
+        Get(host, "/offers")
+    }
+}
+
+// Resilient preset
+struct SubmitApplication: Endpoint {
+    var task: DataTask<Confirmation, AppError> {
+        Post(host, "/applications")
+        Retry(.resilient)
+    }
+}
+
+// Custom policy
+struct CriticalSync: Endpoint {
+    var task: DataTask<SyncResult, AppError> {
+        Post(host, "/sync")
+        Retry(.exponential(base: 2, maxDelay: 60, maxAttempts: 5))
+    }
+}
 ```
 
+### Retry behavior
+
 - **401** → invalidates token, retries with refreshed auth
-- **5xx / timeout / noConnection** → retries with exponential backoff (200ms, 400ms...)
+- **5xx / timeout / connection lost** → retries with the configured delay strategy
 - **4xx (non-401) / decode errors** → fails immediately, no retry
 
 ---
@@ -236,7 +373,7 @@ Config(ServiceConfig(maxRetries: 2))
 ## Error Types
 
 ```swift
-public enum ServiceError<Failure> {
+public enum APIError<Failure> {
     // Serialization
     case encode, decode, unsupportedType, typeMismatch
 
