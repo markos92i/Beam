@@ -1,6 +1,6 @@
 //
 //  DataTests.swift
-//  NetworkActor
+//  Beam
 //
 
 import Foundation
@@ -20,7 +20,7 @@ struct DataTests {
             return (expectedData, response)
         })
 
-        let api = TestAPIClient(client: Client(session: session))
+        let api = TestAPIClient(session: session)
         let result = try await api.request()
         #expect(result.id == mockBody.id)
         #expect(result.value == mockBody.value)
@@ -33,37 +33,10 @@ struct DataTests {
             return (Data(), response)
         })
 
-        let api = TestAPIClient(client: Client(session: session))
+        let api = TestAPIClient(session: session)
 
-        do {
+        await #expect(throws: APIError<Void>.self) {
             _ = try await api.request()
-            #expect(Bool(false))
-        } catch {
-            #expect(true)
         }
     }
-
-    @Test
-    func requestOnline() async throws {
-        let result = try await OnlineAPIClient().fetch()
-        #expect(result.id == 1)
-    }
-}
-
-// MARK: - Online test API (must be at file scope for macro expansion)
-
-struct TodoResponse: Codable, Sendable {
-    let id: Int
-    let title: String
-}
-
-@API(
-    host: "https://jsonplaceholder.typicode.com",
-    base: "",
-    headers: [:],
-    client: Client()
-)
-protocol OnlineAPI {
-    @Get("/todos/1")
-    func fetch() async throws(APIError<Void>) -> TodoResponse
 }

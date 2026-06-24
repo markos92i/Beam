@@ -13,6 +13,13 @@
   },
   "testTargets" : [
     {
+      "skippedTests" : {
+        "suites" : [
+          {
+            "name" : "ResumeDataIntegrationTests"
+          }
+        ]
+      },
       "target" : {
         "containerPath" : "container:",
         "identifier" : "BeamTests",

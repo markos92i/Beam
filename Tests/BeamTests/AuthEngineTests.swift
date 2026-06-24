@@ -1,6 +1,6 @@
 //
 //  AuthEngineTests.swift
-//  NetworkActorTests
+//  BeamTests
 //
 
 import Testing
@@ -64,7 +64,7 @@ struct AuthEngineTests {
     // Caso 3: .ready(valid) → resolveToken() devuelve el mismo token sin llamar onRefresh
     @Test("Case 3: ready(valid) → resolveToken returns cached token without refresh")
     func case3_readyValidToken() async throws {
-        let counter = Counter()
+        let counter = AtomicCounter()
         let engine = AuthEngine<TestToken> {
             await counter.increment()
             return TestToken(id: "should-not-be-called", isValid: true)
@@ -81,7 +81,7 @@ struct AuthEngineTests {
     @Test("Case 4: ready(expired) → N concurrent calls → onRefresh called exactly once")
     func case4_concurrentRefreshCoalesced() async throws {
         let refreshed = TestToken(id: "refreshed", isValid: true)
-        let counter = Counter()
+        let counter = AtomicCounter()
         let engine = AuthEngine<TestToken> {
             await counter.increment()
             try await Task.sleep(for: .milliseconds(100))
@@ -104,7 +104,7 @@ struct AuthEngineTests {
     @Test("Case 5: invalid → N concurrent calls → onRefresh called exactly once")
     func case5_invalidConcurrentRefresh() async throws {
         let refreshed = TestToken(id: "refreshed", isValid: true)
-        let counter = Counter()
+        let counter = AtomicCounter()
         let engine = AuthEngine<TestToken> {
             await counter.increment()
             try await Task.sleep(for: .milliseconds(100))
@@ -141,7 +141,7 @@ struct AuthEngineTests {
     // Caso 7: refresh() falla con error genérico → estado sigue .invalid → siguiente llamada reintenta refresh
     @Test("Case 7: refresh generic error → state stays invalid → next call retries refresh")
     func case7_refreshGenericError() async throws {
-        let counter = Counter()
+        let counter = AtomicCounter()
         let engine = AuthEngine<TestToken> {
             await counter.increment()
             throw AuthError.failedToRefreshToken

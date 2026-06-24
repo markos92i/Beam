@@ -1,6 +1,6 @@
 //
 //  DownloadTests.swift
-//  NetworkActor
+//  Beam
 //
 
 import Foundation
@@ -10,16 +10,19 @@ import Testing
 @Suite
 struct DownloadTests {
 
+    // MARK: - Direct (async throws)
+
     @Test
     func downloadSuccess() async throws {
         let expectedData = "Downloaded file content".data(using: .utf8)!
 
         let session = MockSession({ request in
-            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let headers = ["Content-Disposition": "attachment; filename=\"download-\(UUID().uuidString).bin\""]
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: headers)!
             return (expectedData, response)
         })
 
-        let api = TestAPIClient(client: Client(session: session))
+        let api = TestAPIClient(session: session)
         let url = try await api.download()
         let data = try Data(contentsOf: url)
         #expect(data == expectedData)
@@ -33,7 +36,7 @@ struct DownloadTests {
             return ("data".data(using: .utf8)!, response)
         }, nil, delay: 2)
 
-        let api = TestAPIClient(client: Client(session: session))
+        let api = TestAPIClient(session: session)
 
         do {
             let job = Task { try await api.download() }
@@ -46,23 +49,5 @@ struct DownloadTests {
         } catch {
             #expect(error is APIError<Void>)
         }
-    }
-
-    @Test
-    func downloadResumeSuccess() async throws {
-        let expectedData = "Downloaded file content".data(using: .utf8)!
-        let resumeData = "{ resume: true }".data(using: .utf8)!
-
-        let session = MockSession(nil, { data in
-            let response = HTTPURLResponse(url: URL(string: "https://base-url.com")!, statusCode: 201, httpVersion: nil, headerFields: nil)!
-            #expect(data == resumeData)
-            return (expectedData, response)
-        })
-
-        let api = TestAPIClient(client: Client(session: session))
-        let url = try await api.downloadResume(resumeFrom: resumeData)
-        let data = try Data(contentsOf: url)
-        #expect(data == expectedData)
-        try? FileManager.default.removeItem(at: url)
     }
 }

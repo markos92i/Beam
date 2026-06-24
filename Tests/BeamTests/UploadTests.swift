@@ -1,6 +1,6 @@
 //
 //  UploadTests.swift
-//  NetworkActor
+//  Beam
 //
 
 import Foundation
@@ -9,6 +9,8 @@ import Testing
 
 @Suite
 struct UploadTests {
+
+    // MARK: - Direct (async throws)
 
     @Test
     func uploadSuccess() async throws {
@@ -20,7 +22,7 @@ struct UploadTests {
             return (expectedData, response)
         })
 
-        let api = TestAPIClient(client: Client(session: session))
+        let api = TestAPIClient(session: session)
         let result = try await api.upload(body: UploadRequestMock(content: "Dummy"))
         #expect(result.id == mockBody.id)
     }
@@ -32,7 +34,7 @@ struct UploadTests {
             return (Data(), response)
         }, nil, delay: 2)
 
-        let api = TestAPIClient(client: Client(session: session))
+        let api = TestAPIClient(session: session)
 
         do {
             let job = Task { try await api.upload(body: UploadRequestMock(content: "Dummy")) }
@@ -61,10 +63,12 @@ struct UploadTests {
             return (data, response)
         })
 
-        let api = TestAPIClient(client: Client(session: session))
+        let api = TestAPIClient(session: session)
         let result = try await api.uploadURL(url: temporaryURL)
         #expect(result.id == mockBody.id)
     }
+
+    // MARK: - Handle (progress + cancel + resume)
 
     @Test
     func uploadResumeSuccess() async throws {
@@ -72,14 +76,15 @@ struct UploadTests {
         let expectedData = try JSONEncoder().encode(expectedResponse)
         let resumeData = "{ resume: true }".data(using: .utf8)!
 
-        let session = MockSession(nil, { data in
+        let session = MockSession(uploadResume: { data in
             let response = HTTPURLResponse(url: URL(string: "https://base-url.com")!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             #expect(data == resumeData)
             return (expectedData, response)
         })
 
-        let api = TestAPIClient(client: Client(session: session))
-        let result = try await api.uploadResume(resumeFrom: resumeData)
+        let api = TestAPIClient(session: session)
+        let handle = api.uploadTask(body: UploadRequestMock(content: "Dummy"))
+        let result = try await handle.start(resumeFrom: resumeData)
         #expect(result.id == expectedResponse.id)
     }
 }

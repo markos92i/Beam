@@ -1,6 +1,6 @@
 //
 //  MacroIntegrationTests.swift
-//  NetworkActor
+//  Beam
 //
 //  Tests that validate the @API macro generates working clients end-to-end.
 //
@@ -21,8 +21,7 @@ struct OnlineResponse: Codable, Sendable, Equatable {
 @API(
     host: "https://jsonplaceholder.typicode.com",
     base: "",
-    headers: [:]  ,
-    client: Client()
+    headers: [:]
 )
 protocol JSONPlaceholderAPI {
     @Get("/todos/{id}")
@@ -37,7 +36,7 @@ protocol JSONPlaceholderAPI {
 
 // MARK: - Tests
 
-@Suite
+@Suite(.tags(.network))
 struct MacroIntegrationTests {
 
     let api = JSONPlaceholderAPIClient()

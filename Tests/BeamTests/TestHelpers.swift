@@ -1,18 +1,24 @@
 //
 //  TestHelpers.swift
-//  NetworkActor
+//  Beam
 //
 
 import Foundation
+import Testing
 @testable import Beam
+
+// MARK: - Tags
+
+extension Tag {
+    @Tag static var network: Self
+}
 
 // MARK: - Test API (macro-based)
 
 @API(
     host: "https://base-url.com",
     base: "",
-    headers: [:],
-    client: Client()
+    headers: [:]
 )
 protocol TestAPI {
     @Get("/ok")
@@ -24,14 +30,8 @@ protocol TestAPI {
     @Get("/upload", task: .upload)
     func uploadURL(url: URL) async throws(APIError<Void>) -> ResponseMock
 
-    @Get("/upload", task: .upload)
-    func uploadResume(resumeFrom data: Data) async throws(APIError<Void>) -> ResponseMock
-
     @Get("/download", task: .download)
     func download() async throws(APIError<Void>) -> URL
-
-    @Get("/download", task: .download)
-    func downloadResume(resumeFrom data: Data) async throws(APIError<Void>) -> URL
 
     @Get("/retry")
     func retry() async throws(APIError<Void>) -> ResponseMock
@@ -53,24 +53,29 @@ actor AtomicFlag {
 // MARK: - Mock Auth
 
 actor MockAuth: AuthProtocol {
-    typealias Token = MockToken
-
     let onInvalidate: @Sendable () async -> Void
 
     init(onInvalidate: @escaping @Sendable () async -> Void) {
         self.onInvalidate = onInvalidate
     }
 
-    var authHeader: [String : String] { ["Authorization": "Bearer mock"] }
-    var token: MockToken { MockToken() }
+    // MARK: - AuthProtocol
 
-    func set(token: MockToken) async {}
+    func authenticate(request: inout URLRequest) async throws {
+        request.addValue("Bearer mock", forHTTPHeaderField: "Authorization")
+    }
+
     func invalidate() async { await onInvalidate() }
-    func clear() async {}
 }
 
-struct MockToken: AuthToken {
-    var isValid: Bool { true }
+// MARK: - Auth Test Token
+
+struct TestToken: AuthToken, Sendable {
+    let id: String
+    let isValid: Bool
+
+    static let valid = TestToken(id: "valid-token", isValid: true)
+    static let expired = TestToken(id: "expired-token", isValid: false)
 }
 
 // MARK: - Response Models

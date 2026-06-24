@@ -1,6 +1,6 @@
 //
 //  AuthError.swift
-//  NetworkActor
+//  Beam
 //
 //  Created by Marcos del Castillo Camacho on 30/3/25.
 //
@@ -13,16 +13,16 @@ public enum AuthError: Error, LoggableError, Sendable, Equatable {
     case failedToRefreshToken
     case cancelled
 
-    var info: [String: any Sendable] {
+    var logDescription: String {
         switch self {
         case .missingToken:
-            ["AuthError": "No token available — user may not be logged in"]
+            "No token available — user may not be logged in"
         case .invalidCredentials:
-            ["AuthError": "Credentials rejected by server"]
+            "Credentials rejected by server"
         case .failedToRefreshToken:
-            ["AuthError": "Token refresh failed — session expired"]
+            "Token refresh failed — session expired"
         case .cancelled:
-            ["AuthError": "Authentication cancelled"]
+            "Authentication cancelled"
         }
     }
 }

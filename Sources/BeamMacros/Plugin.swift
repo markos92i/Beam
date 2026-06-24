@@ -1,6 +1,6 @@
 //
 //  Plugin.swift
-//  NetworkActor
+//  Beam
 //
 //  Created by Marcos del Castillo Camacho on 15/06/2026.
 //
@@ -9,7 +9,7 @@ import SwiftCompilerPlugin
 import SwiftSyntaxMacros
 
 @main
-struct NetworkActorMacrosPlugin: CompilerPlugin {
+struct BeamMacrosPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [
         APIMacro.self,
         GetMacro.self,

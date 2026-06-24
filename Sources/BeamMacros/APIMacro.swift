@@ -1,12 +1,13 @@
 //
 //  APIMacro.swift
-//  NetworkActor
+//  Beam
 //
 //  Created by Marcos del Castillo Camacho on 15/06/2026.
 //
 
 import SwiftSyntax
 import SwiftSyntaxMacros
+import SwiftDiagnostics
 
 /// `@API` generates a concrete struct (`{ProtocolName}Client`) conforming to the protocol.
 ///
@@ -35,10 +36,12 @@ public struct APIMacro: PeerMacro {
         var host: String?
         var base: String?
         var headers: String?
-        var client: String?
+        var apiSession: String?
         var auth: String?
         var crash: String?
         var defaultError: String?
+        var apiMapper: String?
+        var generateMock = false
 
         for arg in arguments {
             let label = arg.label?.text
@@ -47,9 +50,11 @@ public struct APIMacro: PeerMacro {
             case "host": host = value
             case "base": base = value
             case "headers": headers = value
-            case "client": client = value
+            case "session": apiSession = value
             case "auth": auth = value
             case "crash": crash = value
+            case "mapper": apiMapper = value
+            case "mock": generateMock = value == "true"
             case "error":
                 defaultError = value.hasSuffix(".self") ? String(value.dropLast(5)) : value
             default: break
@@ -79,18 +84,41 @@ public struct APIMacro: PeerMacro {
                 let method = httpMethod(from: name)
                 guard let method else { continue }
 
-                guard let args = attribute.arguments?.as(LabeledExprListSyntax.self) else { continue }
+                guard let args = attribute.arguments?.as(LabeledExprListSyntax.self) else {
+                    // No arguments at all: @Get, @Post, etc. — path defaults to ""
+                    routeInfo = RouteInfo(method: method, path: "\"\"", taskKind: name == "Socket" ? "stream" : "data", staticHeaders: nil, authPolicy: nil, errorOverride: nil, configOverride: nil, mapperOverride: nil)
+                    break
+                }
                 let argList = Array(args)
-                guard !argList.isEmpty else { continue }
 
-                let path = argList[0].expression.description.trimmingCharacters(in: .whitespaces)
+                // Determine if first argument is the path (unlabeled) or a named param
+                let path: String
+                let namedArgs: ArraySlice<LabeledExprSyntax>
+                if argList.isEmpty {
+                    path = "\"\""
+                    namedArgs = argList[...]
+                } else if argList[0].label == nil {
+                    path = argList[0].expression.description.trimmingCharacters(in: .whitespaces)
+                    namedArgs = argList.dropFirst()
+                } else {
+                    // First arg has a label (e.g. task:, headers:) — no path provided
+                    path = "\"\""
+                    namedArgs = argList[...]
+                }
+
+                // Validate path literal at compile time if it's a pure string
+                if let diagnostic = validatePathLiteral(path, in: context, node: attribute) {
+                    context.diagnose(diagnostic)
+                }
 
                 var taskKind = name == "Socket" ? "stream" : "data"
                 var staticHeaders: String? = nil
                 var authPolicy: String? = nil
                 var routeError: String? = nil
+                var routeConfig: String? = nil
+                var routeMapper: String? = nil
 
-                for arg in argList.dropFirst() {
+                for arg in namedArgs {
                     let label = arg.label?.text
                     let value = arg.expression.description.trimmingCharacters(in: .whitespaces)
                     switch label {
@@ -102,11 +130,15 @@ public struct APIMacro: PeerMacro {
                         if value == ".optional" { authPolicy = ".optional" }
                     case "error":
                         routeError = value.hasSuffix(".self") ? String(value.dropLast(5)) : value
+                    case "config":
+                        routeConfig = value
+                    case "mapper":
+                        routeMapper = value
                     default: break
                     }
                 }
 
-                routeInfo = RouteInfo(method: method, path: path, taskKind: taskKind, staticHeaders: staticHeaders, authPolicy: authPolicy, errorOverride: routeError)
+                routeInfo = RouteInfo(method: method, path: path, taskKind: taskKind, staticHeaders: staticHeaders, authPolicy: authPolicy, errorOverride: routeError, configOverride: routeConfig, mapperOverride: routeMapper)
                 break
             }
 
@@ -115,35 +147,37 @@ public struct APIMacro: PeerMacro {
             functions.append(funcInfo)
         }
 
-        // Build components array
-        var components: [String] = []
-        if let headers { components.append("Header(\(headers))") }
-        if let client { components.append("Use(\(client))") }
-        if let auth { components.append("Auth(\(auth))") }
-        if let crash { components.append("Crash(\(crash))") }
-        let componentsStr = components.joined(separator: ",\n            ")
-
         // Generate client struct
         var output = """
         struct \(clientName): \(protocolName), Sendable {
             static let _apiConfiguration = _APIConfiguration(
                 host: \(host),
                 base: \(baseStr),
-                components: [
-                    \(componentsStr)
-                ]
+                headers: \(headers ?? "[:]")
+        """
+
+        if let apiSession { output += ",\n            session: \(apiSession)" }
+        if let auth { output += ",\n            auth: \(auth)" }
+        if let crash { output += ",\n            crash: \(crash)" }
+        if let apiMapper { output += ",\n            mapper: \(apiMapper)" }
+
+        output += """
+
             )
 
             private let _config: _APIConfiguration
 
-            init(client: (any ClientProtocol)? = nil) {
-                if let client {
-                    var components = Self._apiConfiguration.components.filter { !($0 is DSL.Use) }
-                    components.insert(Use(client), at: 0)
+            init(session: (any SessionProtocol)? = nil) {
+                if let session {
                     _config = _APIConfiguration(
                         host: Self._apiConfiguration.host,
                         base: Self._apiConfiguration.base,
-                        components: components
+                        headers: Self._apiConfiguration.headers,
+                        session: session,
+                        auth: Self._apiConfiguration.auth,
+                        crash: Self._apiConfiguration.crash,
+                        mapper: Self._apiConfiguration.mapper,
+                        interceptors: Self._apiConfiguration.interceptors
                     )
                 } else {
                     _config = Self._apiConfiguration
@@ -159,7 +193,13 @@ public struct APIMacro: PeerMacro {
 
         output += "}"
 
-        return [DeclSyntax(stringLiteral: output)]
+        var declarations: [DeclSyntax] = [DeclSyntax(stringLiteral: output)]
+
+        if generateMock {
+            declarations.append(DeclSyntax(stringLiteral: generateMockStruct(protocolName: protocolName, functions: functions)))
+        }
+
+        return declarations
     }
 
     // MARK: - Helpers
@@ -195,7 +235,7 @@ public struct APIMacro: PeerMacro {
             let type = param.type.description.trimmingCharacters(in: .whitespaces)
 
             let role: ParamRole
-            if internalName == "body" || externalName == "body" {
+            if externalName == "body" {
                 role = .body
             } else if externalName == "query" {
                 role = .queryNamed(key: internalName)
@@ -205,6 +245,8 @@ public struct APIMacro: PeerMacro {
                 role = .header(key: internalName)
             } else if pathParams.contains(internalName) || pathParams.contains(externalName) {
                 role = .path
+            } else if externalName == "url" && type == "URL" && route.taskKind != "upload" {
+                role = .absoluteURL
             } else {
                 role = .ignored
             }
@@ -220,6 +262,12 @@ public struct APIMacro: PeerMacro {
         // Parse return type
         if let returnClause = funcDecl.signature.returnClause {
             returnType = returnClause.type.description.trimmingCharacters(in: .whitespaces)
+        }
+
+        // For stream (socket) tasks, unwrap WebSocketConnection<X, Y> → X
+        if route.taskKind == "stream", let rt = returnType,
+           let extracted = extractFirstGeneric(from: rt, prefix: "WebSocketConnection<") {
+            returnType = extracted
         }
 
         // Parse error type from typed throws: throws(APIError<X>) → extract X
@@ -247,6 +295,25 @@ public struct APIMacro: PeerMacro {
         )
     }
 
+    /// Extracts the first generic argument from a type string like "UploadTask<ResponseMock, Void>" → "ResponseMock"
+    private static func extractFirstGeneric(from type: String, prefix: String) -> String? {
+        guard type.hasPrefix(prefix), type.hasSuffix(">") else { return nil }
+        let inner = String(type.dropFirst(prefix.count).dropLast())
+        // Find the first top-level comma (respecting nested generics)
+        var depth = 0
+        for (index, char) in inner.enumerated() {
+            switch char {
+            case "<": depth += 1
+            case ">": depth -= 1
+            case "," where depth == 0:
+                return String(inner.prefix(index)).trimmingCharacters(in: .whitespaces)
+            default: break
+            }
+        }
+        // No comma found — single generic argument
+        return inner.trimmingCharacters(in: .whitespaces)
+    }
+
     private static func extractPathParams(from path: String) -> Set<String> {
         var params: Set<String> = []
         var cleaned = path
@@ -266,6 +333,51 @@ public struct APIMacro: PeerMacro {
             i = cleaned.index(after: i)
         }
         return params
+    }
+
+    // MARK: - Path Validation
+
+    /// Characters that are invalid in a URL path segment.
+    private static let invalidPathCharacters: Set<Character> = [" ", "<", ">", "|", "\\", "^", "`"]
+
+    /// Validates a path literal at compile time. Only checks pure string literals
+    /// (no interpolation). Emits a warning diagnostic if invalid characters are found.
+    private static func validatePathLiteral(
+        _ path: String,
+        in context: some MacroExpansionContext,
+        node: AttributeSyntax
+    ) -> Diagnostic? {
+        // Only validate pure string literals (starts and ends with quotes, no interpolation markers)
+        guard path.hasPrefix("\"") && path.hasSuffix("\"") else { return nil }
+        let content = String(path.dropFirst().dropLast())
+
+        // Skip if it contains string interpolation \(...)
+        guard !content.contains("\\(") else { return nil }
+
+        // Remove {param} placeholders before checking
+        var cleaned = content
+        while let open = cleaned.firstIndex(of: "{"),
+              let close = cleaned[open...].firstIndex(of: "}") {
+            cleaned.removeSubrange(open...close)
+        }
+
+        // Check for invalid characters
+        if cleaned.contains(where: { invalidPathCharacters.contains($0) }) {
+            return Diagnostic(
+                node: node,
+                message: MacroDiagnostic.invalidPathCharacters(path: content)
+            )
+        }
+
+        // Check path starts with / (empty path is valid when route is fully defined in base)
+        guard content.isEmpty || content.hasPrefix("/") else {
+            return Diagnostic(
+                node: node,
+                message: MacroDiagnostic.pathMustStartWithSlash(path: content)
+            )
+        }
+
+        return nil
     }
 
     // MARK: - Code Generation
@@ -289,7 +401,16 @@ public struct APIMacro: PeerMacro {
 
         // Body
         let bodyParam = fn.params.first(where: { $0.role == .body })
-        let bodyStr = bodyParam != nil ? ",\n                body: .json(\(bodyParam!.internalName))" : ""
+        let bodyStr: String
+        if let bodyParam {
+            if bodyParam.type == "HTTPBody" {
+                bodyStr = ",\n                body: \(bodyParam.internalName)"
+            } else {
+                bodyStr = ",\n                body: .json(\(bodyParam.internalName))"
+            }
+        } else {
+            bodyStr = ""
+        }
 
         // Headers
         let headerParams = fn.params.filter { if case .header = $0.role { return true }; return false }
@@ -323,11 +444,20 @@ public struct APIMacro: PeerMacro {
             for p in queryArrayParams { parts.append("\(p.internalName)") }
             for p in queryNamedParams {
                 if case .queryNamed(let key) = p.role {
-                    parts.append("URLQueryItem(name: \"\(key)\", value: \"\\(\(p.internalName))\")")
+                    if p.type.hasSuffix("?") {
+                        parts.append("\(p.internalName).map { URLQueryItem(name: \"\(key)\", value: \"\\($0)\") }")
+                    } else {
+                        parts.append("URLQueryItem(name: \"\(key)\", value: \"\\(\(p.internalName))\")")
+                    }
                 }
             }
+
+            let hasOptionals = queryNamedParams.contains { $0.type.hasSuffix("?") }
+
             if queryArrayParams.count == 1 && queryNamedParams.isEmpty {
                 queryStr = ",\n                queryItems: \(queryArrayParams[0].internalName)"
+            } else if hasOptionals {
+                queryStr = ",\n                queryItems: [\(parts.joined(separator: ", "))].compactMap { $0 }"
             } else {
                 queryStr = ",\n                queryItems: [\(parts.joined(separator: ", "))]"
             }
@@ -339,120 +469,360 @@ public struct APIMacro: PeerMacro {
             authPolicyStr = ",\n                authPolicy: \(policy)"
         }
 
+        // Config override
+        var extraComponentsStr = ""
+        if let configOverride = fn.route.configOverride {
+            extraComponentsStr = ",\n                extraComponents: [Config(\(configOverride))]"
+        }
+
         // Generate based on task kind
         switch fn.route.taskKind {
         case "stream":
-            return generateStreamFunction(fn, successType: successType, failureType: failureType, paramsStr: paramsStr, path: path, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr)
+            return generateStreamFunction(fn, successType: successType, failureType: failureType, paramsStr: paramsStr, path: path, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, extraComponentsStr: extraComponentsStr)
         case "upload":
-            return generateUploadFunction(fn, successType: successType, failureType: failureType, paramsStr: paramsStr, throwsStr: throwsStr, path: path, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr)
+            return generateUploadFunction(fn, successType: successType, failureType: failureType, paramsStr: paramsStr, throwsStr: throwsStr, path: path, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, extraComponentsStr: extraComponentsStr)
         case "download":
-            return generateDownloadFunction(fn, failureType: failureType, paramsStr: paramsStr, throwsStr: throwsStr, path: path, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr)
+            return generateDownloadFunction(fn, failureType: failureType, paramsStr: paramsStr, throwsStr: throwsStr, path: path, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, extraComponentsStr: extraComponentsStr)
+        case "bytes":
+            return generateBytesFunction(fn, successType: successType, failureType: failureType, paramsStr: paramsStr, throwsStr: throwsStr, path: path, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, extraComponentsStr: extraComponentsStr)
         default:
-            return generateDataFunction(fn, successType: successType, failureType: failureType, paramsStr: paramsStr, throwsStr: throwsStr, path: path, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr)
+            return generateDataFunction(fn, successType: successType, failureType: failureType, paramsStr: paramsStr, throwsStr: throwsStr, path: path, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, extraComponentsStr: extraComponentsStr)
         }
     }
 
-    private static func generateDataFunction(_ fn: FunctionInfo, successType: String, failureType: String, paramsStr: String, throwsStr: String, path: String, bodyStr: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String) -> String {
-        let returnStr = fn.returnType != nil ? " -> \(successType)" : ""
-        let progressParams = paramsStr.isEmpty ? "onProgress: ProgressHandler?" : "\(paramsStr), onProgress: ProgressHandler?"
-        let callArgs = fn.params.map { param in
-            let ext = param.externalName ?? param.internalName
-            if ext == param.internalName { return "\(ext): \(ext)" }
-            return "\(ext): \(param.internalName)"
-        }.joined(separator: ", ")
-        return """
-            func \(fn.name)(\(paramsStr)) async \(throwsStr)\(returnStr) {
-                try await \(fn.name)(\(callArgs.isEmpty ? "onProgress: nil" : "\(callArgs), onProgress: nil"))
-            }
+    // MARK: - Shared Code-Gen Helpers
 
-            func \(fn.name)(\(progressParams)) async \(throwsStr)\(returnStr) {
-                let service: Service<\(successType), \(failureType)> = _buildRoute(
-                    config: _config,
-                    method: .\(fn.route.method),
-                    path: \(path)\(bodyStr)\(extraHeadersStr)\(queryStr)\(authPolicyStr)
-                )
-                let progressTask = onProgress.map { handler in Task { for await p in service.progress { await handler(p) } } }
-                defer { progressTask?.cancel() }
-                return try await service.data()
-            }
+    /// Builds the parameter list with an optional progress handler appended.
+    private static func progressParams(_ paramsStr: String) -> String {
+        paramsStr.isEmpty ? "onProgress: ProgressHandler? = nil" : "\(paramsStr), onProgress: ProgressHandler? = nil"
+    }
+
+    /// Generates the function body that wraps an endpoint call with optional progress tracking.
+    private static func functionBody(name: String, paramsStr: String, serviceInit: String, callExpr: String, throwsStr: String, returnStr: String) -> String {
         """
-    }
-
-    private static func generateUploadFunction(_ fn: FunctionInfo, successType: String, failureType: String, paramsStr: String, throwsStr: String, path: String, bodyStr: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String) -> String {
-        let returnStr = " -> \(successType)"
-        let callExpr: String
-        if fn.params.contains(where: { $0.internalName == "url" && $0.type == "URL" }) {
-            callExpr = "return try await service.upload(url: url)"
-        } else if fn.params.contains(where: { $0.internalName == "data" && $0.externalName == "resumeFrom" }) {
-            callExpr = "return try await service.upload(resumeFrom: data)"
-        } else {
-            callExpr = "return try await service.upload()"
-        }
-        let progressParams = paramsStr.isEmpty ? "onProgress: ProgressHandler?" : "\(paramsStr), onProgress: ProgressHandler?"
-        let callArgs = fn.params.map { param in
-            let ext = param.externalName ?? param.internalName
-            if ext == param.internalName { return "\(ext): \(ext)" }
-            return "\(ext): \(param.internalName)"
-        }.joined(separator: ", ")
-        return """
-            func \(fn.name)(\(paramsStr)) async \(throwsStr)\(returnStr) {
-                try await \(fn.name)(\(callArgs.isEmpty ? "onProgress: nil" : "\(callArgs), onProgress: nil"))
-            }
-
-            func \(fn.name)(\(progressParams)) async \(throwsStr)\(returnStr) {
-                let service: Service<\(successType), \(failureType)> = _buildRoute(
-                    config: _config,
-                    method: .\(fn.route.method),
-                    path: \(path)\(bodyStr)\(extraHeadersStr)\(queryStr)\(authPolicyStr)
-                )
-                let progressTask = onProgress.map { handler in Task { for await p in service.progress { await handler(p) } } }
-                defer { progressTask?.cancel() }
+            func \(name)(\(paramsStr)) async \(throwsStr)\(returnStr) {
+                \(serviceInit)
                 \(callExpr)
             }
         """
     }
 
-    private static func generateDownloadFunction(_ fn: FunctionInfo, failureType: String, paramsStr: String, throwsStr: String, path: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String) -> String {
-        let callExpr: String
-        if fn.params.contains(where: { $0.internalName == "data" && $0.externalName == "resumeFrom" }) {
-            callExpr = "return try await service.download(resumeFrom: data)"
+    // MARK: - Task-Specific Generators
+
+    private static func generateDataFunction(_ fn: FunctionInfo, successType: String, failureType: String, paramsStr: String, throwsStr: String, path: String, bodyStr: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String, extraComponentsStr: String) -> String {
+        let hasAbsoluteURL = fn.params.contains { $0.role == .absoluteURL }
+        let returnStr = fn.returnType != nil ? " -> \(successType)" : ""
+        let serviceInit = buildServiceInit(successType: successType, failureType: failureType, path: path, method: fn.route.method, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, configOverride: fn.route.configOverride, mapperOverride: fn.route.mapperOverride, absoluteURL: hasAbsoluteURL)
+
+        return functionBody(name: fn.name, paramsStr: paramsStr, serviceInit: serviceInit, callExpr: "return try await endpoint.data()", throwsStr: throwsStr, returnStr: returnStr)
+    }
+
+    private static func generateUploadFunction(_ fn: FunctionInfo, successType: String, failureType: String, paramsStr: String, throwsStr: String, path: String, bodyStr: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String, extraComponentsStr: String) -> String {
+        let returnStr = " -> \(successType)"
+
+        let callExpr: String = if fn.params.contains(where: { $0.internalName == "url" && $0.type == "URL" }) {
+            "return try await endpoint.upload(url: url)"
         } else {
-            callExpr = "return try await service.download()"
+            "return try await endpoint.upload()"
         }
-        let progressParams = paramsStr.isEmpty ? "onProgress: ProgressHandler?" : "\(paramsStr), onProgress: ProgressHandler?"
-        let callArgs = fn.params.map { param in
-            let ext = param.externalName ?? param.internalName
-            if ext == param.internalName { return "\(ext): \(ext)" }
-            return "\(ext): \(param.internalName)"
+
+        let serviceInit = buildServiceInit(successType: successType, failureType: failureType, path: path, method: fn.route.method, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, configOverride: fn.route.configOverride, mapperOverride: fn.route.mapperOverride)
+
+        // Protocol-conforming overload (no progress)
+        let callArgs = fn.params.map { p in
+            let ext = p.externalName ?? p.internalName
+            return ext == p.internalName ? "\(ext): \(ext)" : "\(ext): \(p.internalName)"
         }.joined(separator: ", ")
+        let forwarding = callArgs.isEmpty ? "onProgress: nil" : "\(callArgs), onProgress: nil"
+
+        // Handle factory params: exclude file URL since it's passed to start(url:) at call time
+        let handleParams = fn.params.filter { !($0.internalName == "url" && $0.type == "URL") }
+        let handleParamsStr = handleParams.map { param in
+            let ext = param.externalName ?? param.internalName
+            if ext == param.internalName {
+                return "\(ext): \(param.type)"
+            } else {
+                return "\(ext) \(param.internalName): \(param.type)"
+            }
+        }.joined(separator: ", ")
+
+        return """
+            func \(fn.name)(\(paramsStr)) async \(throwsStr)\(returnStr) {
+                try await \(fn.name)(\(forwarding))
+            }
+
+            func \(fn.name)(\(progressParams(paramsStr))) async \(throwsStr)\(returnStr) {
+                \(serviceInit)
+                await onProgress?(endpoint.progress)
+                \(callExpr)
+            }
+
+            func \(fn.name)Task(\(handleParamsStr)) -> UploadTask<\(successType), \(failureType)> {
+                \(serviceInit)
+                return UploadTask(endpoint: endpoint)
+            }
+        """
+    }
+
+    private static func generateDownloadFunction(_ fn: FunctionInfo, failureType: String, paramsStr: String, throwsStr: String, path: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String, extraComponentsStr: String) -> String {
+        let hasAbsoluteURL = fn.params.contains { $0.role == .absoluteURL }
+        let callExpr = fn.params.contains(where: { $0.internalName == "data" && $0.externalName == "resumeFrom" })
+            ? "return try await endpoint.download(resumeFrom: data)"
+            : "return try await endpoint.download()"
+
+        let serviceInit = buildServiceInit(successType: "URL", failureType: failureType, path: path, method: fn.route.method, bodyStr: "", extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, configOverride: fn.route.configOverride, mapperOverride: fn.route.mapperOverride, absoluteURL: hasAbsoluteURL)
+
+        // Protocol-conforming overload (no progress)
+        let callArgs = fn.params.map { p in
+            let ext = p.externalName ?? p.internalName
+            return ext == p.internalName ? "\(ext): \(ext)" : "\(ext): \(p.internalName)"
+        }.joined(separator: ", ")
+        let forwarding = callArgs.isEmpty ? "onProgress: nil" : "\(callArgs), onProgress: nil"
+
         return """
             func \(fn.name)(\(paramsStr)) async \(throwsStr) -> URL {
-                try await \(fn.name)(\(callArgs.isEmpty ? "onProgress: nil" : "\(callArgs), onProgress: nil"))
+                try await \(fn.name)(\(forwarding))
             }
 
-            func \(fn.name)(\(progressParams)) async \(throwsStr) -> URL {
-                let service: Service<URL, \(failureType)> = _buildRoute(
-                    config: _config,
-                    method: .\(fn.route.method),
-                    path: \(path)\(extraHeadersStr)\(queryStr)\(authPolicyStr)
-                )
-                let progressTask = onProgress.map { handler in Task { for await p in service.progress { await handler(p) } } }
-                defer { progressTask?.cancel() }
+            func \(fn.name)(\(progressParams(paramsStr))) async \(throwsStr) -> URL {
+                \(serviceInit)
+                await onProgress?(endpoint.progress)
                 \(callExpr)
+            }
+
+            func \(fn.name)Task(\(paramsStr)) -> DownloadTask<\(failureType)> {
+                \(serviceInit)
+                return DownloadTask(endpoint: endpoint)
             }
         """
     }
 
-    private static func generateStreamFunction(_ fn: FunctionInfo, successType: String, failureType: String, paramsStr: String, path: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String) -> String {
+    private static func generateStreamFunction(_ fn: FunctionInfo, successType: String, failureType: String, paramsStr: String, path: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String, extraComponentsStr: String) -> String {
+        let socketInit = buildSocketInit(messageType: successType, failureType: failureType, path: path, method: fn.route.method, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, configOverride: fn.route.configOverride, mapperOverride: fn.route.mapperOverride)
+        let throwsStr = "throws(APIError<\(failureType)>)"
+
         return """
-            func \(fn.name)(\(paramsStr)) -> StreamHandle<\(successType), \(failureType)> {
-                let service: Service<\(successType), \(failureType)> = _buildRoute(
-                    config: _config,
-                    method: .\(fn.route.method),
-                    path: \(path)\(extraHeadersStr)\(queryStr)\(authPolicyStr)
-                )
-                return StreamHandle(service: service)
+            func \(fn.name)(\(paramsStr)) async \(throwsStr) -> WebSocketConnection<\(successType), \(failureType)> {
+                \(socketInit)
+                return try await endpoint.connect()
             }
+        """
+    }
+
+    private static func generateBytesFunction(_ fn: FunctionInfo, successType: String, failureType: String, paramsStr: String, throwsStr: String, path: String, bodyStr: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String, extraComponentsStr: String) -> String {
+        let hasAbsoluteURL = fn.params.contains { $0.role == .absoluteURL }
+
+        // Extract element type from ByteStream<T> → T
+        let elementType: String
+        if let extracted = extractFirstGeneric(from: successType, prefix: "ByteStream<") {
+            elementType = extracted
+        } else {
+            elementType = successType
+        }
+
+        let serviceInit = buildServiceInit(successType: elementType, failureType: failureType, path: path, method: fn.route.method, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, configOverride: fn.route.configOverride, mapperOverride: fn.route.mapperOverride, absoluteURL: hasAbsoluteURL)
+
+        return """
+            func \(fn.name)(\(paramsStr)) async \(throwsStr) -> ByteStream<\(elementType)> {
+                \(serviceInit)
+                return try await endpoint.stream()
+            }
+        """
+    }
+
+    // MARK: - Service Init Builder
+
+    private static func buildServiceInit(
+        successType: String,
+        failureType: String,
+        path: String,
+        method: String,
+        bodyStr: String,
+        extraHeadersStr: String,
+        queryStr: String,
+        authPolicyStr: String,
+        configOverride: String?,
+        mapperOverride: String?,
+        absoluteURL: Bool = false
+    ) -> String {
+        // Build headers merging expression
+        let headersMerge: String
+        if !extraHeadersStr.isEmpty {
+            let dictPart = extraHeadersStr
+                .replacingOccurrences(of: ",\n                extraHeaders: ", with: "")
+            headersMerge = "_config.headers.merging(\(dictPart)) { _, new in new }"
+        } else {
+            headersMerge = "_config.headers"
+        }
+
+        // Auth policy
+        let authPolicyExpr: String
+        if !authPolicyStr.isEmpty {
+            let policyPart = authPolicyStr
+                .replacingOccurrences(of: ",\n                authPolicy: ", with: "")
+            authPolicyExpr = policyPart
+        } else {
+            authPolicyExpr = ".required"
+        }
+
+        // Config
+        let configExpr: String
+        if let configOverride {
+            configExpr = configOverride
+        } else {
+            configExpr = ".standard"
+        }
+
+        // Serializer: route override > API-level (from _config)
+        let mapperExpr: String
+        if let mapperOverride {
+            mapperExpr = mapperOverride
+        } else {
+            mapperExpr = "_config.mapper"
+        }
+
+        // When absoluteURL is set, the URL param provides the full target — skip host/path/params construction
+        if absoluteURL {
+            // Body expression (still relevant for POST/PUT with absolute URL)
+            let bodyExpr: String
+            if !bodyStr.isEmpty {
+                let bodyPart = bodyStr
+                    .replacingOccurrences(of: ",\n                body: ", with: "")
+                bodyExpr = bodyPart
+            } else {
+                bodyExpr = "nil"
+            }
+
+            return """
+            let endpoint = Endpoint<\(successType), \(failureType)>(
+                        session: _config.session,
+                        auth: _config.auth,
+                        crash: _config.crash,
+                        mapper: \(mapperExpr),
+                        config: \(configExpr),
+                        authPolicy: \(authPolicyExpr),
+                        interceptors: _config.interceptors,
+                        logLevel: _config.logLevel,
+                        api: APIRequest(
+                            method: .\(method),
+                            host: url.absoluteString,
+                            path: "",
+                            query: [],
+                            headers: \(headersMerge),
+                            body: \(bodyExpr)
+                        )
+                    )
+            """
+        }
+
+        // Build query items
+        let queryItemsExpr: String
+        if !queryStr.isEmpty {
+            let itemsPart = queryStr
+                .replacingOccurrences(of: ",\n                queryItems: ", with: "")
+            queryItemsExpr = itemsPart
+        } else {
+            queryItemsExpr = "[]"
+        }
+
+        // Body expression
+        let bodyExpr: String
+        if !bodyStr.isEmpty {
+            let bodyPart = bodyStr
+                .replacingOccurrences(of: ",\n                body: ", with: "")
+            bodyExpr = bodyPart
+        } else {
+            bodyExpr = "nil"
+        }
+
+        return """
+        let endpoint = Endpoint<\(successType), \(failureType)>(
+                    session: _config.session,
+                    auth: _config.auth,
+                    crash: _config.crash,
+                    mapper: \(mapperExpr),
+                    config: \(configExpr),
+                    authPolicy: \(authPolicyExpr),
+                    interceptors: _config.interceptors,
+                    logLevel: _config.logLevel,
+                    api: APIRequest(
+                        method: .\(method),
+                        host: _config.host,
+                        path: _config.base + \(path),
+                        query: \(queryItemsExpr),
+                        headers: \(headersMerge),
+                        body: \(bodyExpr)
+                    )
+                )
+        """
+    }
+
+    // MARK: - Socket Init Builder
+
+    private static func buildSocketInit(
+        messageType: String,
+        failureType: String,
+        path: String,
+        method: String,
+        extraHeadersStr: String,
+        queryStr: String,
+        authPolicyStr: String,
+        configOverride: String?,
+        mapperOverride: String?
+    ) -> String {
+        // Build headers merging expression
+        let headersMerge: String
+        if !extraHeadersStr.isEmpty {
+            let dictPart = extraHeadersStr
+                .replacingOccurrences(of: ",\n                extraHeaders: ", with: "")
+            headersMerge = "_config.headers.merging(\(dictPart)) { _, new in new }"
+        } else {
+            headersMerge = "_config.headers"
+        }
+
+        // Build query items
+        let queryItemsExpr: String
+        if !queryStr.isEmpty {
+            let itemsPart = queryStr
+                .replacingOccurrences(of: ",\n                queryItems: ", with: "")
+            queryItemsExpr = itemsPart
+        } else {
+            queryItemsExpr = "[]"
+        }
+
+        // Auth policy
+        let authPolicyExpr: String
+        if !authPolicyStr.isEmpty {
+            let policyPart = authPolicyStr
+                .replacingOccurrences(of: ",\n                authPolicy: ", with: "")
+            authPolicyExpr = policyPart
+        } else {
+            authPolicyExpr = ".required"
+        }
+
+        // Config
+        let configExpr = configOverride ?? ".standard"
+
+        // Serializer
+        let mapperExpr = mapperOverride ?? "_config.mapper"
+
+        return """
+        let endpoint = SocketEndpoint<\(messageType), \(failureType)>(
+                    session: _config.session,
+                    auth: _config.auth,
+                    mapper: \(mapperExpr),
+                    config: \(configExpr),
+                    authPolicy: \(authPolicyExpr),
+                    interceptors: _config.interceptors,
+                    logLevel: _config.logLevel,
+                    api: APIRequest(
+                        method: .\(method),
+                        host: _config.host,
+                        path: _config.base + \(path),
+                        query: \(queryItemsExpr),
+                        headers: \(headersMerge)
+                    )
+                )
         """
     }
 
@@ -481,6 +851,86 @@ public struct APIMacro: PeerMacro {
         }
         return "\"\(result)\""
     }
+
+    // MARK: - Mock Generation
+
+    private static func generateMockStruct(protocolName: String, functions: [FunctionInfo]) -> String {
+        let mockName = "\(protocolName)Mock"
+        var output = "struct \(mockName): \(protocolName) {\n"
+
+        // Disambiguate overloaded names
+        var nameCounts: [String: Int] = [:]
+        for fn in functions { nameCounts[fn.name, default: 0] += 1 }
+
+        var nameOccurrences: [String: Int] = [:]
+
+        for fn in functions {
+            let baseMockName = "\(fn.name)Mock"
+            let mockPropertyName: String
+
+            if nameCounts[fn.name, default: 0] > 1 {
+                // Disambiguate by appending first param's external label
+                nameOccurrences[fn.name, default: 0] += 1
+                if let firstParam = fn.params.first {
+                    let label = (firstParam.externalName ?? firstParam.internalName).capitalizingFirst
+                    mockPropertyName = "\(fn.name)\(label)Mock"
+                } else {
+                    mockPropertyName = "\(baseMockName)\(nameOccurrences[fn.name]!)"
+                }
+            } else {
+                mockPropertyName = baseMockName
+            }
+
+            let successType = fn.returnType ?? "Void"
+            let failureType = fn.failureType
+            let throwsClause = "throws(APIError<\(failureType)>)"
+
+            // Closure parameter types
+            let closureParamTypes = fn.params.map(\.type).joined(separator: ", ")
+
+            // Closure type: (Params) async throws(APIError<F>) -> Success
+            let closureType = "(\(closureParamTypes)) async \(throwsClause) -> \(successType)"
+
+            // fatalError message
+            let fatalMessage = "\(mockName).\(fn.name) not stubbed"
+
+            // Default closure that crashes
+            let defaultClosure: String
+            if fn.params.isEmpty {
+                defaultClosure = "{ fatalError(\"\(fatalMessage)\") }"
+            } else {
+                let wildcards = fn.params.map { _ in "_" }.joined(separator: ", ")
+                defaultClosure = "{ \(wildcards) in fatalError(\"\(fatalMessage)\") }"
+            }
+
+            // Property declaration
+            output += "    var \(mockPropertyName): \(closureType) = \(defaultClosure)\n"
+
+            // Method signature (must match protocol exactly)
+            let paramsStr = fn.params.map { param in
+                let ext = param.externalName ?? param.internalName
+                if ext == param.internalName {
+                    return "\(ext): \(param.type)"
+                } else {
+                    return "\(ext) \(param.internalName): \(param.type)"
+                }
+            }.joined(separator: ", ")
+
+            let returnStr = fn.returnType != nil ? " -> \(successType)" : ""
+
+            // Call arguments (pass internal names to the closure)
+            let callArgs = fn.params.map(\.internalName).joined(separator: ", ")
+
+            // Method body
+            output += "\n"
+            output += "    func \(fn.name)(\(paramsStr)) async \(throwsClause)\(returnStr) {\n"
+            output += "        try await \(mockPropertyName)(\(callArgs))\n"
+            output += "    }\n\n"
+        }
+
+        output += "}"
+        return output
+    }
 }
 
 // MARK: - Data Types
@@ -491,6 +941,7 @@ enum ParamRole: Equatable {
     case queryArray
     case header(key: String)
     case path
+    case absoluteURL
     case ignored
 }
 
@@ -501,6 +952,8 @@ struct RouteInfo {
     let staticHeaders: String?
     let authPolicy: String?
     let errorOverride: String?
+    let configOverride: String?
+    let mapperOverride: String?
 }
 
 struct ParamInfo {
@@ -516,4 +969,13 @@ struct FunctionInfo {
     let returnType: String?
     let failureType: String
     let route: RouteInfo
+}
+
+// MARK: - Helpers
+
+extension String {
+    var capitalizingFirst: String {
+        guard let first else { return self }
+        return first.uppercased() + dropFirst()
+    }
 }

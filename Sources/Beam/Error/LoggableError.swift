@@ -1,20 +1,16 @@
 //
 //  LoggableError.swift
-//  NetworkActor
+//  Beam
 //
 //  Created by Marcos del Castillo Camacho on 12/06/2026.
 //
 
 import Foundation
 
+/// Errors that provide a human-readable description for structured logging.
+///
+/// The logger renders `logDescription` as-is — multiline strings are supported
+/// and will be printed preserving line breaks.
 protocol LoggableError: Error {
-    var info: [String: any Sendable] { get }
-    var logLines: (subtitle: String?, detail: [String]) { get }
-}
-
-extension LoggableError {
-    var logLines: (subtitle: String?, detail: [String]) {
-        guard let value = info.values.first else { return (nil, []) }
-        return (nil, ["􀺾 \(value)"])
-    }
+    var logDescription: String { get }
 }

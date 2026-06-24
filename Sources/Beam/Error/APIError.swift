@@ -1,6 +1,6 @@
 //
 //  APIError.swift
-//  NetworkActor
+//  Beam
 //
 //  Created by Marcos del Castillo Camacho on 12/3/25.
 //
@@ -8,20 +8,20 @@
 import Foundation
 
 public enum APIError<Failure: Sendable>: Error, Identifiable {
-    // Serialización
+    // Serialization
     case encode
     case decode
     case unsupportedType
     case typeMismatch
 
-    // Request inválida
+    // Invalid request
     case invalidURL
     case invalidFormat
     case missingUploadData
     case missingToken
     case tokenExpired
 
-    // Red
+    // Network
     case noConnection
     case timedOut
     case serverUnreachable
@@ -29,10 +29,10 @@ public enum APIError<Failure: Sendable>: Error, Identifiable {
     case noResponse
     case connectionClosed(code: Int, reason: String?)
 
-    // Respuesta del servidor
+    // Server response
     case http(status: HTTPStatus, body: Failure? = nil)
 
-    // Sistema
+    // System
     case storage
     case cancelled
     case unknown
@@ -81,6 +81,18 @@ extension APIError {
         switch self {
         case .cancelled, .noConnection, .timedOut: true
         default: false
+        }
+    }
+
+    /// Whether this error should trigger WebSocket reconnection.
+    var isReconnectable: Bool {
+        switch self {
+        case .connectionClosed(let code, _):
+            code != 1000 && code != 1001
+        case .noConnection, .timedOut, .serverUnreachable, .unknown:
+            true
+        default:
+            false
         }
     }
 
@@ -142,7 +154,7 @@ extension APIError {
 
 // MARK: - Init from other errors
 extension APIError {
-    init(from networkError: ClientError, body: Failure? = nil) {
+    init(from networkError: TransportError, body: Failure? = nil) {
         switch networkError {
         case .url(let urlError):
             switch urlError.code {
@@ -157,9 +169,6 @@ extension APIError {
         case .invalidURL: self = .invalidURL
         case .http(let status, _): self = .http(status: status, body: body)
         case .cancelled: self = .cancelled
-        case .webSocket(let closeCode, let reasonData):
-            let reason = reasonData.flatMap { String(data: $0, encoding: .utf8) }
-            self = .connectionClosed(code: closeCode.rawValue, reason: reason)
         default: self = .unknown
         }
     }
@@ -179,12 +188,27 @@ extension APIError {
         }
     }
 
-    init(from serializerError: SerializerError) {
-        switch serializerError {
+    init(from mapperError: MapperError) {
+        switch mapperError {
         case .unsuported: self = .unsupportedType
         case .incorrect: self = .typeMismatch
         case .encoding: self = .encode
         case .decoding: self = .decode
+        }
+    }
+
+    init(from wsError: WebSocketError) {
+        switch wsError {
+        case .closed(let code, let reason):
+            self = .connectionClosed(code: code.rawValue, reason: reason)
+        case .unexpectedDisconnection:
+            self = .connectionClosed(code: 1006, reason: nil)
+        case .network(let urlError):
+            self = APIError(from: TransportError.url(urlError))
+        case .sendFailed:
+            self = .connectionClosed(code: 1006, reason: "send failed")
+        case .pingFailed:
+            self = .connectionClosed(code: 1006, reason: "ping timeout")
         }
     }
 }

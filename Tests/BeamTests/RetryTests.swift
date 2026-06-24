@@ -1,23 +1,11 @@
 //
 //  RetryTests.swift
-//  NetworkActor
+//  Beam
 //
 
 import Foundation
 import Testing
 @testable import Beam
-
-// Retry API uses a custom config with 2 retries
-@API(
-    host: "https://base-url.com",
-    base: "",
-    headers: [:],
-    client: Client()
-)
-protocol RetryAPI {
-    @Get("/retry")
-    func retry() async throws(APIError<Void>) -> ResponseMock
-}
 
 @Suite
 struct RetryTests {
@@ -38,24 +26,18 @@ struct RetryTests {
             return (expectedData, response)
         })
 
-        // Use _buildRoute directly with retry config for this specific test
-        let service: Service<ResponseMock, Void> = _buildRoute(
-            config: _APIConfiguration(
-                host: "https://base-url.com",
-                base: "",
-                components: [Use(Client(session: session))]
-            ),
-            method: .get,
-            path: "/retry",
-            extraComponents: [Config(RequestConfig(retry: RetryPolicy(maxAttempts: 2)))]
+        let endpoint = Endpoint<ResponseMock, Void>(
+            session: session,
+            config: RequestConfig(retry: RetryPolicy(maxAttempts: 2)),
+            api: APIRequest(method: .get, host: "https://base-url.com", path: "/retry")
         )
-        let result = try await service.data()
+        let result = try await endpoint.data()
         #expect(result.id == "retry-ok")
         #expect(await counter.value == 3)
     }
 
     @Test
-    func noRetryOnClientError() async throws {
+    func noRetryOnTransportError() async throws {
         let counter = AtomicCounter()
 
         let session = MockSession({ request in
@@ -64,19 +46,14 @@ struct RetryTests {
             return (Data(), response)
         })
 
-        let service: Service<ResponseMock, Void> = _buildRoute(
-            config: _APIConfiguration(
-                host: "https://base-url.com",
-                base: "",
-                components: [Use(Client(session: session))]
-            ),
-            method: .get,
-            path: "/retry",
-            extraComponents: [Config(RequestConfig(retry: RetryPolicy(maxAttempts: 2)))]
+        let endpoint = Endpoint<ResponseMock, Void>(
+            session: session,
+            config: RequestConfig(retry: RetryPolicy(maxAttempts: 2)),
+            api: APIRequest(method: .get, host: "https://base-url.com", path: "/retry")
         )
 
         do {
-            _ = try await service.data()
+            _ = try await endpoint.data()
             #expect(Bool(false))
         } catch {
             #expect(await counter.value == 1)
@@ -98,18 +75,13 @@ struct RetryTests {
             return (expectedData, response)
         })
 
-        let service: Service<ResponseMock, Void> = _buildRoute(
-            config: _APIConfiguration(
-                host: "https://base-url.com",
-                base: "",
-                components: [Use(Client(session: session))]
-            ),
-            method: .get,
-            path: "/retry",
-            extraComponents: [Config(RequestConfig(retry: RetryPolicy(maxAttempts: 2)))]
+        let endpoint = Endpoint<ResponseMock, Void>(
+            session: session,
+            config: RequestConfig(retry: RetryPolicy(maxAttempts: 2)),
+            api: APIRequest(method: .get, host: "https://base-url.com", path: "/retry")
         )
 
-        let result = try await service.data()
+        let result = try await endpoint.data()
         #expect(result.id == "timeout-ok")
         #expect(await counter.value == 2)
     }
@@ -124,19 +96,14 @@ struct RetryTests {
             return (Data(), response)
         })
 
-        let service: Service<ResponseMock, Void> = _buildRoute(
-            config: _APIConfiguration(
-                host: "https://base-url.com",
-                base: "",
-                components: [Use(Client(session: session))]
-            ),
-            method: .get,
-            path: "/retry",
-            extraComponents: [Config(RequestConfig(retry: RetryPolicy(maxAttempts: 2)))]
+        let endpoint = Endpoint<ResponseMock, Void>(
+            session: session,
+            config: RequestConfig(retry: RetryPolicy(maxAttempts: 2)),
+            api: APIRequest(method: .get, host: "https://base-url.com", path: "/retry")
         )
 
         do {
-            _ = try await service.data()
+            _ = try await endpoint.data()
             #expect(Bool(false))
         } catch {
             #expect(error.status?.rawValue == 503)
@@ -163,14 +130,14 @@ struct RetryTests {
 
         let auth = MockAuth(onInvalidate: { await flag.set() })
 
-        let service = Service<ResponseMock, Void>(
-            client: Client(session: session),
+        let endpoint = Endpoint<ResponseMock, Void>(
+            session: session,
             auth: auth,
             config: RequestConfig(retry: .standard),
             api: APIRequest(method: .get, host: "https://base-url.com", path: "/auth-retry")
         )
 
-        let result = try await service.data()
+        let result = try await endpoint.data()
         #expect(result.id == "auth-ok")
         #expect(await flag.value)
         #expect(await counter.value == 2)
