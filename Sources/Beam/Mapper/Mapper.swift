@@ -6,9 +6,6 @@
 //
 
 import Foundation
-#if canImport(UIKit)
-import UIKit
-#endif
 
 public struct Mapper: MapperProtocol {
     private let encoder: JSONEncoder
@@ -18,52 +15,46 @@ public struct Mapper: MapperProtocol {
         self.encoder = encoder
         self.decoder = decoder
     }
-    
-    public func encode(_ value: some Encodable) throws -> Data {
+
+    public func encode(_ value: some Encodable) throws(MapperError) -> Data {
+        if let raw = value as? any RawEncodable {
+            return try raw.encode()
+        }
+
         do {
             return try encoder.encode(value)
         } catch let error as EncodingError {
             throw MapperError(encodingError: error)
+        } catch {
+            throw .incorrect
         }
     }
-    
+
     /// Deserializes raw Data into the inferred generic type.
-    public func decode<Value>(data: Data) throws -> Value {
-        switch Value.self {
-        case is Data.Type:
-            guard let result = data as? Value else { throw MapperError.incorrect }
+    public func decode<Value>(data: Data) throws(MapperError) -> Value {
+        if Value.self is Void.Type, let result = () as? Value {
             return result
-            
-        case is Bool.Type:
-            guard let string = String(data: data, encoding: .utf8), let result = Bool(string) as? Value else { throw MapperError.incorrect }
-            return result
-            
-        case is String.Type:
-            guard let result = String(data: data, encoding: .utf8) as? Value else { throw MapperError.incorrect }
-            return result
-            
-        case let type as Codable.Type:
+        }
+
+        if let raw = Value.self as? any RawDecodable.Type {
             do {
-                guard let result = try decoder.decode(type, from: data) as? Value else { throw MapperError.incorrect }
+                let decoded = try raw.decode(from: data)
+                guard let result = decoded as? Value else { throw MapperError.incorrect }
                 return result
-            } catch let error as DecodingError {
-                throw MapperError(decodingError: error)
-            } catch {
-                throw error
-            }
-            
-        #if canImport(UIKit)
-        case is UIImage.Type:
-            guard let result = UIImage(data: data) as? Value else { throw MapperError.incorrect }
+            } catch let error as MapperError { throw error }
+            catch { throw .incorrect }
+        }
+
+        guard let type = Value.self as? any Decodable.Type else { throw .unsuported }
+        do {
+            guard let result = try decoder.decode(type, from: data) as? Value else { throw MapperError.incorrect }
             return result
-        #endif
-            
-        case is Void.Type:
-            guard let result = () as? Value else { throw MapperError.incorrect }
-            return result
-            
-        default:
-            throw MapperError.unsuported
+        } catch let error as MapperError {
+            throw error
+        } catch let error as DecodingError {
+            throw MapperError(decodingError: error)
+        } catch {
+            throw .incorrect
         }
     }
 }

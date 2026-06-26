@@ -8,6 +8,6 @@
 import Foundation
 
 public protocol MapperProtocol: Sendable {
-    func encode(_ value: some Encodable) throws -> Data
-    func decode<Value>(data: Data) throws -> Value
+    func encode(_ value: some Encodable) throws(MapperError) -> Data
+    func decode<Value>(data: Data) throws(MapperError) -> Value
 }
