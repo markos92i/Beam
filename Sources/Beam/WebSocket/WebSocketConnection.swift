@@ -46,17 +46,17 @@ public struct WebSocketConnection<Success: Sendable, Failure: Sendable>: Sendabl
     /// Yields state transitions (connecting, connected, reconnecting, disconnected).
     public let state: AsyncStream<WebSocketConnectionState>
 
-    private let _send: @Sendable (Success) async throws -> Void
-    private let _sendData: @Sendable (Data) async throws -> Void
-    private let _sendText: @Sendable (String) async throws -> Void
+    private let _send: @Sendable (Success) async throws(APIError<Failure>) -> Void
+    private let _sendData: @Sendable (Data) async throws(APIError<Failure>) -> Void
+    private let _sendText: @Sendable (String) async throws(APIError<Failure>) -> Void
     private let _disconnect: @Sendable () async -> Void
 
     init(
         messages: AsyncThrowingStream<StreamEvent<Success, Failure>, Error>,
         state: AsyncStream<WebSocketConnectionState>,
-        send: @escaping @Sendable (Success) async throws -> Void,
-        sendData: @escaping @Sendable (Data) async throws -> Void,
-        sendText: @escaping @Sendable (String) async throws -> Void,
+        send: @escaping @Sendable (Success) async throws(APIError<Failure>) -> Void,
+        sendData: @escaping @Sendable (Data) async throws(APIError<Failure>) -> Void,
+        sendText: @escaping @Sendable (String) async throws(APIError<Failure>) -> Void,
         disconnect: @escaping @Sendable () async -> Void
     ) {
         self.messages = messages
@@ -68,17 +68,17 @@ public struct WebSocketConnection<Success: Sendable, Failure: Sendable>: Sendabl
     }
 
     /// Sends a typed value as a JSON-encoded binary message.
-    public func send(_ value: Success) async throws {
+    public func send(_ value: Success) async throws(APIError<Failure>) {
         try await _send(value)
     }
 
     /// Sends raw data as a binary message.
-    public func send(data: Data) async throws {
+    public func send(data: Data) async throws(APIError<Failure>) {
         try await _sendData(data)
     }
 
     /// Sends a string as a text message.
-    public func send(text: String) async throws {
+    public func send(text: String) async throws(APIError<Failure>) {
         try await _sendText(text)
     }
 

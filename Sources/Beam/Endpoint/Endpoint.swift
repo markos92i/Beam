@@ -226,6 +226,41 @@ public struct Endpoint<Success: Sendable, Failure: Sendable>: Sendable {
     public func cancel() async -> Data? {
         await client.cancel()
     }
+
+    // MARK: - WebSocket
+
+    /// Connects and returns an active `WebSocketConnection`.
+    ///
+    /// Includes auto-reconnection and ping keepalive based on `RequestConfig`.
+    public func connect() async throws(APIError<Failure>) -> WebSocketConnection<Success, Failure> {
+        let (stateStream, stateContinuation) = AsyncStream<WebSocketConnectionState>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+
+        let socket = Socket<Success, Failure>(
+            session: session,
+            mapper: mapper,
+            config: config,
+            log: log,
+            id: id,
+            requestBuilder: { [self] in try await self.request },
+            stateContinuation: stateContinuation
+        )
+
+        do {
+            let messages = try await socket.open()
+            return WebSocketConnection(
+                messages: messages,
+                state: stateStream,
+                send: { (value) async throws(APIError<Failure>) in try await socket.send(value) },
+                sendData: { (data) async throws(APIError<Failure>) in try await socket.send(data: data) },
+                sendText: { (text) async throws(APIError<Failure>) in try await socket.send(text: text) },
+                disconnect: { await socket.disconnect() }
+            )
+        } catch {
+            throw await mapError(error, attempt: 0)
+        }
+    }
 }
 
 // MARK: - Request Building
@@ -255,11 +290,8 @@ extension Endpoint {
 
             if let auth {
                 switch authPolicy {
-                case .required:
-                    try await auth.authenticate(request: &request)
-
-                case .optional:
-                    try? await auth.authenticate(request: &request)
+                case .required: try await auth.authenticate(request: &request)
+                case .optional: try? await auth.authenticate(request: &request)
                 }
             }
 

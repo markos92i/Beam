@@ -21,8 +21,8 @@ struct WebSocketEchoIntegrationTests {
     private func makeEndpoint<Message: Sendable & Codable>(
         path: String = "/raw",
         config: RequestConfig = RequestConfig(retry: .none, pingInterval: nil)
-    ) -> SocketEndpoint<Message, Void> {
-        SocketEndpoint<Message, Void>(
+    ) -> Endpoint<Message, Void> {
+        Endpoint<Message, Void>(
             config: config,
             api: APIRequest(
                 method: .get,
@@ -36,7 +36,7 @@ struct WebSocketEchoIntegrationTests {
 
     @Test
     func connectAndReceiveEcho() async throws {
-        let endpoint: SocketEndpoint<String, Void> = makeEndpoint()
+        let endpoint: Endpoint<String, Void> = makeEndpoint()
         let connection = try await endpoint.connect()
 
         let message = "Hello Beam!"
@@ -56,7 +56,7 @@ struct WebSocketEchoIntegrationTests {
 
     @Test
     func sendMultipleMessagesAndReceiveEchoes() async throws {
-        let endpoint: SocketEndpoint<String, Void> = makeEndpoint()
+        let endpoint: Endpoint<String, Void> = makeEndpoint()
         let connection = try await endpoint.connect()
 
         let messages = ["uno", "dos", "tres"]
@@ -79,7 +79,7 @@ struct WebSocketEchoIntegrationTests {
 
     @Test
     func sendRapidMessagesAndReceiveAll() async throws {
-        let endpoint: SocketEndpoint<String, Void> = makeEndpoint()
+        let endpoint: Endpoint<String, Void> = makeEndpoint()
         let connection = try await endpoint.connect()
 
         let count = 10
@@ -104,7 +104,7 @@ struct WebSocketEchoIntegrationTests {
 
     @Test
     func disconnectGracefully() async throws {
-        let endpoint: SocketEndpoint<String, Void> = makeEndpoint()
+        let endpoint: Endpoint<String, Void> = makeEndpoint()
         let connection = try await endpoint.connect()
 
         // Verify we can connect and then disconnect cleanly
@@ -126,7 +126,7 @@ struct WebSocketEchoIntegrationTests {
 
     @Test
     func stateTransitionsOnConnect() async throws {
-        let endpoint: SocketEndpoint<String, Void> = makeEndpoint()
+        let endpoint: Endpoint<String, Void> = makeEndpoint()
         let connection = try await endpoint.connect()
 
         // Give the connection a moment to stabilize
@@ -156,7 +156,7 @@ struct WebSocketEchoIntegrationTests {
 
     @Test
     func connectionWithPingKeepAlive() async throws {
-        let endpoint: SocketEndpoint<String, Void> = makeEndpoint(
+        let endpoint: Endpoint<String, Void> = makeEndpoint(
             config: RequestConfig(retry: .none, pingInterval: 2)
         )
         let connection = try await endpoint.connect()

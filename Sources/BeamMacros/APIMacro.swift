@@ -815,7 +815,7 @@ public struct APIMacro: PeerMacro {
         let mapperExpr = mapperOverride ?? "_config.mapper"
 
         return """
-        let endpoint = SocketEndpoint<\(messageType), \(failureType)>(
+        let endpoint = Endpoint<\(messageType), \(failureType)>(
                     session: _config.session,
                     auth: _config.auth,
                     mapper: \(mapperExpr),

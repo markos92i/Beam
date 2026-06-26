@@ -39,6 +39,17 @@ actor Socket<Success: Sendable, Failure: Sendable> {
         self.stateContinuation = stateContinuation
     }
 
+    // MARK: - Active Connection
+
+    private var activeConnection: URLSessionWebSocketTask {
+        get throws(APIError<Failure>) {
+            guard let task = activeTask, task.state == .running else {
+                throw .connectionClosed(code: 1006, reason: nil)
+            }
+            return task
+        }
+    }
+
     // MARK: - Open
 
     /// Opens the WebSocket connection and returns the message stream.
@@ -71,9 +82,7 @@ actor Socket<Success: Sendable, Failure: Sendable> {
 
     /// Sends a typed value as a JSON-encoded binary message.
     func send(_ value: Success) async throws(APIError<Failure>) {
-        guard let task = activeTask, task.state == .running else {
-            throw APIError<Failure>.connectionClosed(code: 1006, reason: nil)
-        }
+        let task = try activeConnection
 
         let data: Data
         do {
@@ -97,9 +106,7 @@ actor Socket<Success: Sendable, Failure: Sendable> {
 
     /// Sends raw data as a binary message.
     func send(data: Data) async throws(APIError<Failure>) {
-        guard let task = activeTask, task.state == .running else {
-            throw APIError<Failure>.connectionClosed(code: 1006, reason: nil)
-        }
+        let task = try activeConnection
 
         do {
             try await task.send(.data(data))
@@ -111,9 +118,7 @@ actor Socket<Success: Sendable, Failure: Sendable> {
 
     /// Sends a string as a text message.
     func send(text: String) async throws(APIError<Failure>) {
-        guard let task = activeTask, task.state == .running else {
-            throw APIError<Failure>.connectionClosed(code: 1006, reason: nil)
-        }
+        let task = try activeConnection
 
         do {
             try await task.send(.string(text))
@@ -150,7 +155,7 @@ actor Socket<Success: Sendable, Failure: Sendable> {
             do {
                 request = try await requestBuilder()
             } catch {
-                let apiError = mapError(error)
+                let apiError = APIError<Failure>(error: error)
                 if let openCont = pendingOpenContinuation {
                     pendingOpenContinuation = nil
                     openCont.resume(returning: .failure(apiError))
@@ -188,7 +193,7 @@ actor Socket<Success: Sendable, Failure: Sendable> {
 
             // 5. Decide: reconnect or finish
             guard let error = disconnectError, isReconnectable(error), retryPolicy.maxAttempts > 0 else {
-                finish(continuation: continuation, error: disconnectError.map { mapError($0) })
+                finish(continuation: continuation, error: disconnectError.map { APIError(error: $0) })
                 return
             }
 
@@ -279,6 +284,7 @@ actor Socket<Success: Sendable, Failure: Sendable> {
         error: APIError<Failure>?
     ) {
         if let error {
+            log.log(.error(id: id, icon: error.icon, name: error.name, detail: error.detail, attempt: 0))
             stateContinuation?.yield(.disconnected(reason: .error("\(error)")))
             continuation.finish(throwing: error)
         } else {
@@ -294,19 +300,8 @@ actor Socket<Success: Sendable, Failure: Sendable> {
             wsError.isReconnectable
         case let urlError as URLError:
             [.networkConnectionLost, .timedOut, .notConnectedToInternet].contains(urlError.code)
-        case let apiError as APIError<Failure>:
-            apiError.isReconnectable
         default:
             false
-        }
-    }
-
-    private func mapError(_ error: any Error) -> APIError<Failure> {
-        switch error {
-        case let e as APIError<Failure>: e
-        case let e as WebSocketError: APIError(from: e)
-        case let e as AuthError: APIError(from: e)
-        default: .unknown
         }
     }
 
