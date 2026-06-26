@@ -1,279 +1,662 @@
-# NetworkActor
+# Beam
 
-A declarative, type-safe networking layer for Swift built with `@resultBuilder`. Compile-time validation, typed endpoints, structured error handling, and beautiful console logging.
+Librería de networking para iOS basada en macros Swift. Transforma protocolos en clientes HTTP type-safe con typed throws, concurrencia moderna, y soporte completo para uploads/downloads con progreso y cancelación.
 
----
-
-## Defining Endpoints
-
-Endpoints conform to `Endpoint` and declare their operation type via `DataTask`, `UploadTask`, or `DownloadTask`:
+## Definir una API
 
 ```swift
-enum API {
-    struct Search: Endpoint {
-        let page: Int
+import Beam
 
-        var task: DataTask<[ItemDto], AppError> {
-            Get(AppConfig.baseURL, "/items")
-            Query("page", value: "\(page)")
-            Header(AppConfig.headers)
-            Use(Client(certificates: AppConfig.certificates))
-            Auth(AuthManager.shared)
-            Crash(CrashManager.shared)
+@API(
+    host: "https://api.example.com",
+    base: "/v2/users",
+    headers: ["X-App-Version": "1.0"],
+    client: Client(session: .shared, certificates: []),
+    auth: AuthManager.shared,
+    crash: CrashManager.shared
+)
+protocol UsersAPI {
+    @Get("/{id}")
+    func fetch(id: Int) async throws(APIError<ErrorDto>) -> UserDto
+
+    @Post("")
+    func create(body: CreateUserRequest) async throws(APIError<ErrorDto>) -> UserDto
+
+    @Put("/{id}")
+    func update(id: Int, body: UpdateUserRequest) async throws(APIError<ErrorDto>)
+
+    @Delete("/{id}")
+    func remove(id: Int) async throws(APIError<ErrorDto>)
+}
+```
+
+El macro genera `UsersAPIClient` con todas las funciones implementadas.
+
+## Uso básico (async throws)
+
+```swift
+// GET con path param
+let user = try await UsersAPIClient().fetch(id: 42)
+
+// POST con body JSON
+let newUser = try await UsersAPIClient().create(body: request)
+
+// DELETE
+try await UsersAPIClient().remove(id: 42)
+
+// Con progress handler
+let url = try await FilesAPIClient().download(id: "abc", onProgress: { progress in
+    self.progressValue = progress.fractionCompleted
+})
+```
+
+## Tasks (progreso + cancelación + resume)
+
+Para operaciones que necesitan control granular: tracking en Live Activities, cancelación con resume data, o binding a vistas.
+
+```swift
+// Crear task con callback de progreso
+let task = FilesAPIClient().uploadTask(body: .multipart(...)) { progress in
+    self.state.progress = progress
+}
+
+// Trackear en Live Activity
+ProgressManager.shared.track(id: task.id, message: "Subiendo archivo", stream: task.progress)
+
+// Ejecutar
+try await task.start()
+
+// Cancelar con resume data
+let resumeData = await task.cancel()
+
+// Reintentar desde donde se quedó
+try await task.start(resumeFrom: resumeData)
+```
+
+### UploadTask en SwiftUI (fullScreenCover)
+
+Los tasks son `Identifiable`, se pueden usar como binding para presentar vistas:
+
+```swift
+@State var uploadService: UploadTask<Void, ErrorDto>?
+
+var body: some View {
+    content
+        .fullScreenCover(item: $uploadService) { task in
+            UploadProgressView(state: $state) {
+                Task { await task.cancel() }
+            }
         }
-    }
-
-    struct Download: Endpoint {
-        let code: String
-
-        var task: DownloadTask<AppError> {
-            Get(AppConfig.baseURL, "/documents/\(code)")
-            Header(AppConfig.headers)
-            Auth(AuthManager.shared)
-            Crash(CrashManager.shared)
-        }
-    }
 }
 
-enum MediaAPI {
-    struct Upload: Endpoint {
-        let url: URL
-
-        var task: UploadTask<Void, AppError> {
-            Put(AppConfig.baseURL, "/media/upload")
-            Body(.multipart(.init(media: [.init(url: url, key: "file")])))
-            Auth(AuthManager.shared)
-            Crash(CrashManager.shared)
-        }
+func upload() async {
+    let task = FilesAPIClient().uploadTask(body: body) { progress in
+        self.state.progress = progress
     }
+    self.uploadService = task
+
+    do {
+        try await task.start()
+    } catch { ... }
+
+    self.uploadService = nil
 }
 ```
 
----
+## Parámetros
 
-## Calling Endpoints
+El macro detecta el rol de cada parámetro por **external label** (convención):
 
-All endpoints use `.call()` — the task type determines the underlying operation:
+| External label | Rol | Ejemplo |
+|-----------|-----|---------|
+| `body` | Body JSON | `func create(body request: UserDto)` |
+| `query` | Query param (key = nombre interno) | `func list(query page: Int)` |
+| `header` | Header dinámico (key = nombre interno) | `func get(header token: String)` |
+| `url` + tipo `URL` | URL absoluta (override de host + base + path) | `func download(url: URL)` |
+| Tipo `[URLQueryItem]` | Query items directos | `func search(params: [URLQueryItem])` |
+| Coincide con `{name}` en path | Path param | `@Get("/users/{id}") func get(id: Int)` |
+| Tipo `HTTPBody` | Body raw (multipart, etc) | `func upload(body: HTTPBody)` |
+
+> **Nota sobre uploads:** En endpoints con `task: .upload`, el parámetro `url: URL` mantiene su
+> semántica de "fichero local" (sube desde disco) y NO activa el override de URL absoluta.
+
+### Escapar colisiones
+
+La detección se basa en el **external label**. Si el dominio tiene un campo que colisiona con una
+convención reservada, usa el dual naming de Swift para escapar:
 
 ```swift
-// Data request
-let offers = try await API.Search(page: 0).call()
+// "body" como body HTTP ✓
+func create(body request: CreateRequest) async throws(APIError<E>) -> Item
 
-// Download
-let file = try await API.Download(code: "ABC").call()
+// Campo de dominio "body" que NO es el body HTTP — external label distinto:
+func update(_ body: BodyModel) async throws(APIError<E>) -> Item
+func update(content body: BodyModel) async throws(APIError<E>) -> Item
 
-// Upload with progress
-let task = MediaAPI.Upload(url: fileURL)
-for await progress in task.progress { updateUI(progress) }
-try await task.call()
+// URL absoluta override ✓
+func download(url: URL) async throws(APIError<E>) -> URL
 
-// Cancel
-await task.cancel()
+// Parámetro URL que NO es override — external label distinto:
+func process(target url: URL) async throws(APIError<E>) -> Result
 ```
 
----
-
-## Task Types
-
-| Type | Operation | Return |
-|------|-----------|--------|
-| `DataTask<Success, Failure>` | `URLSession.data` | Decoded `Success` |
-| `UploadTask<Success, Failure>` | `URLSession.upload` | Decoded `Success` |
-| `DownloadTask<Failure>` | `URLSession.download` | `URL` to file |
-
-The compiler enforces that you can only call `.call()` — you cannot accidentally call upload on a DataTask or download on an UploadTask.
-
----
-
-## DSL Components
+## Task types
 
 ```swift
-// HTTP Methods (first line, mandatory)
-Get(host, path)
-Post(host, path)
-Put(host, path)
-Delete(host, path)
-Patch(host, path)
+// Data (default) — request/response estándar
+@Get("/users")
+func list() async throws(APIError<ErrorDto>) -> [UserDto]
 
-// Request modifiers
-Header("Key", value: "Value")
-Header(["Key1": "Value1", "Key2": "Value2"])
-Query("name", value: "value")
-Query([URLQueryItem(name: "a", value: "1")])
-Body(.json(encodable))
-Body(.data(rawData))
-Body(.multipart(form))
-Timeout(30)
+// Download — devuelve URL del fichero descargado
+@Get("/file", task: .download)
+func download() async throws(APIError<ErrorDto>) -> URL
 
-// Infrastructure
-Use(Client(session:, certificates:, crash:))
-Auth(authManager)
-Crash(crashManager)
-Config(ServiceConfig(maxRetries: 2))
+// Upload — sube body con progreso real
+@Put("/file", task: .upload)
+func upload(body: FileDto) async throws(APIError<ErrorDto>)
+
+// Bytes — streaming incremental (SSE, NDJSON, chunked)
+@Get("/feed", task: .bytes)
+func feed() async throws(APIError<ErrorDto>) -> ByteStream
+
+// WebSocket — conexión bidireccional
+@Socket("/chat")
+func connect() -> WebSocketConnection<Message, ErrorDto>
 ```
 
----
+### Download desde URL absoluta
 
-## Auth Manager
-
-The library handles token refresh automatically. Implement `AuthProtocol`:
+Cuando el backend devuelve una URL completa (CDN, signed URLs, links de paginación), usa
+`url: URL` para que el macro ignore el host + base configurados:
 
 ```swift
-actor AuthManager: AuthProtocol {
-    static let shared = AuthManager()
+@API(host: "https://api.example.com", base: "/v2", ...)
+protocol DocumentsAPI {
+    // Download normal con path relativo
+    @Get("/documents/{id}/file", task: .download)
+    func downloadDocument(id: String) async throws(APIError<ErrorDto>) -> URL
 
-    private lazy var engine = AuthEngine(onRefresh: Self.refresh)
+    // Download desde URL absoluta (ignora host + base)
+    @Get(task: .download)
+    func download(url: URL) async throws(APIError<ErrorDto>) -> URL
+}
 
-    var authHeader: [String: String] {
-        get async throws { ["Authorization": "Bearer \(try await token.id)"] }
+// Uso:
+let absoluteURL = URL(string: "https://cdn.example.com/files/doc.pdf?token=abc")!
+let file = try await client.download(url: absoluteURL)
+```
+
+Auth, headers, interceptors y retry siguen aplicándose — solo cambia el destino de la petición.
+
+## Variantes de Upload
+
+El macro genera diferentes implementaciones según la firma del método en el protocolo:
+
+| Firma | Método interno | Descripción |
+|-------|----------------|-------------|
+| `func upload(body: HTTPBody)` | `endpoint.upload()` | Sube el body serializado (multipart, json, etc.) en memoria |
+| `func upload(url: URL)` | `endpoint.upload(url:)` | Sube directamente desde archivo en disco — ideal para archivos grandes sin cargarlos en memoria |
+
+En todos los casos se generan las variantes con y sin `onProgress`, y el `Task` correspondiente:
+
+```swift
+// Protocolo
+@Put("/file", task: .upload)
+func upload(body: HTTPBody) async throws(APIError<ErrorDto>)
+
+@Put("/large-file", task: .upload)
+func uploadFromDisk(url: URL) async throws(APIError<ErrorDto>)
+
+// Generado:
+// - upload(body:) / uploadFromDisk(url:)              → async throws
+// - upload(body:onProgress:) / uploadFromDisk(url:onProgress:)  → async throws con progreso
+// - uploadTask(body:) / uploadFromDiskTask()      → UploadTask (cancelable, resumable)
+```
+
+El `UploadTask` expone métodos directos para cada variante:
+
+```swift
+let task = api.uploadTask(body: body)
+
+// Iniciar upload (usa body del endpoint)
+try await task.start()
+
+// O subir desde archivo
+try await task.start(url: fileURL)
+
+// O subir data explícita
+try await task.start(data: rawData)
+
+// Cancelar y obtener resume data
+let resumeData = await task.cancel()
+
+// Reanudar
+try await task.start(resumeFrom: resumeData)
+```
+
+## Config por ruta
+
+Cada endpoint puede tener su propia configuración de retry y timeout:
+
+```swift
+@Get("/critical-data", config: RequestConfig(retry: .resilient, timeout: 120))
+func fetchCritical() async throws(APIError<ErrorDto>) -> CriticalDto
+
+@Post("/fire-and-forget", config: RequestConfig(retry: .none, timeout: 10))
+func notify(body: NotifyRequest) async throws(APIError<ErrorDto>)
+```
+
+## Interceptors
+
+Los interceptors permiten modificar requests antes de enviarlas e inspeccionar respuestas:
+
+```swift
+struct MetricsInterceptor: RequestInterceptor {
+    func intercept(request: URLRequest) async -> URLRequest {
+        var req = request
+        req.setValue(UUID().uuidString, forHTTPHeaderField: "X-Request-ID")
+        return req
     }
 
-    var token: Token { get async throws { try await engine.resolveToken() } }
-
-    func set(token: Token) async { await engine.set(token: token) }
-    func invalidate() async { await engine.invalidate() }
-    func clear() async { await engine.clear() }
-
-    static func refresh() async throws -> Token {
-        let response = try await AuthService.Refresh().call()
-        return Token(id: response.accessToken, date: .now, expiration: response.expiresIn)
+    func didReceive(response: HTTPURLResponse, data: Data, for request: URLRequest) async {
+        MetricsService.shared.track(
+            path: request.url?.path() ?? "",
+            status: response.statusCode
+        )
     }
 }
 ```
 
-`AuthEngine` handles concurrency: multiple simultaneous 401s trigger a single refresh, and all waiting requests resume with the new token.
-
----
-
-## Crash & Log Protocol
-
-Implement `CrashProtocol` to receive error reports and formatted logs:
+Se aplican a nivel de `@API` o por ruta:
 
 ```swift
-struct CrashManager: CrashProtocol {
-    static let shared = CrashManager()
+// A nivel de configuración global (DSL component)
+Intercept([MetricsInterceptor(), DeviceHeaderInterceptor()])
 
-    func report(error: Error, userInfo: [String: Any]) {
-        YourCrashService.record(error: error, userInfo: userInfo)
-    }
+// Directamente en el builder
+let endpoint = Endpoint<Response, Error>(
+    client: client,
+    interceptors: [MetricsInterceptor()],
+    api: request
+)
+```
 
-    func log(_ output: String) {
-        #if DEBUG
-        print(output)
-        #endif
-    }
+## Typed throws
+
+Los errores están tipados. El tipo de error se infiere del `throws` clause o del parámetro `error:` de la ruta:
+
+```swift
+// Error por defecto del @API
+@API(host: ..., error: ErrorDto.self)
+protocol MyAPI {
+    @Get("/data")
+    func fetch() async throws(APIError<ErrorDto>) -> DataDto
+}
+
+// Error específico por ruta
+@Post("/legacy", error: OldErrorDto.self)
+func legacyCall() async throws(APIError<OldErrorDto>)
+```
+
+Esto permite pattern matching tipado en el catch:
+
+```swift
+do {
+    try await api.fetch()
+} catch let error {
+    // error.body es de tipo ErrorDto? — acceso directo al body del error del servidor
+    showAlert(error.body?.message ?? "Error desconocido")
 }
 ```
 
-Disable request/response logs at any time:
+## WebSocket
+
 ```swift
-Logger.enabled = false
+@API(host: "wss://ws.example.com", ...)
+protocol ChatAPI {
+    @Socket("/chat/{roomId}")
+    func connect(roomId: String) async throws(APIError<ErrorDto>) -> WebSocketConnection<ChatMessage, ErrorDto>
+}
+
+// Uso
+let connection = try await ChatAPIClient().connect(roomId: "room-42")
+
+for try await event in connection {
+    switch event {
+    case .message(let msg): handle(msg)
+    case .reconnecting(let attempt, _): showReconnecting()
+    case .reconnected: hideReconnecting()
+    }
+}
+
+try await connection.send(ChatMessage(text: "Hola"))
+await connection.disconnect()
 ```
 
----
+## Override de client por instancia
 
-## Console Output
-
-### Request
-```
-│ 􀁶 Request: A27B    􀋧 GET    􀎠 https://api.example.com/items?page=0
-│ 􁒠 Header: [􁠱 auth, 􀡅 json, 􀠩, 􀠩, 􀠩]
+```swift
+// Usar un client diferente para una llamada específica
+let result = try await UsersAPIClient(client: Client(session: customSession)).fetch(id: 1)
 ```
 
-### Response (success)
-```
-│ 􀁸 Response: A27B    􀅴 200    􀐫 152ms
-│ 􁒠 Header: [􀡅 json, 􀫦 cache, 􀠩, 􀠩, 􀠩]
-│ 􁒡 Body:
-│ {
-│   "data" : [
-│     { "id" : 1, "title" : "Example Item" }
-│   ]
-│ }
+## Mocking
+
+El client generado por `@API` incluye closures opcionales `on*` para cada método. Si están configuradas, se usan en lugar de la llamada real — sin structs separados, sin flags, sin protocolos extra:
+
+```swift
+@API(
+    host: "https://api.example.com",
+    base: "/v2/users",
+    auth: AuthManager.shared
+)
+protocol UsersAPI {
+    @Get("/{id}")
+    func fetch(id: Int) async throws(APIError<ErrorDto>) -> UserDto
+
+    @Post("")
+    func create(body request: CreateUserRequest) async throws(APIError<ErrorDto>) -> UserDto
+
+    @Delete("/{id}")
+    func remove(id: Int) async throws(APIError<ErrorDto>)
+}
 ```
 
-### Response (error)
-```
-│ 􀁸 Response: 7C9E    􀁞 500    􀐫 340ms
-│ 􁒠 Header: [􀡅 json, 􀠩, 􀠩]
-│ 􁒡 Body:
-│ {"error":"Internal server error"}
+El macro genera `UsersAPIClient` con las propiedades `onFetch`, `onCreate`, `onRemove`:
+
+```swift
+struct UsersAPIClient: UsersAPI {
+    var onFetch: ((Int) async throws(APIError<ErrorDto>) -> UserDto)?
+    var onCreate: ((CreateUserRequest) async throws(APIError<ErrorDto>) -> UserDto)?
+    var onRemove: ((Int) async throws(APIError<ErrorDto>) -> Void)?
+
+    func fetch(id: Int) async throws(APIError<ErrorDto>) -> UserDto {
+        if let mock = onFetch { return try await mock(id) }
+        // ... llamada real
+    }
+    // ...
+}
 ```
 
-### Service Error (decode)
+### Uso en tests
+
+```swift
+@Test func fetchUser() async throws {
+    var api = UsersAPIClient()
+    api.onFetch = { id in UserDto(id: id, name: "Test") }
+
+    let viewModel = UsersViewModel(api: api)
+    await viewModel.load(userId: 42)
+
+    #expect(viewModel.user?.name == "Test")
+}
+
+@Test func fetchUserError() async {
+    var api = UsersAPIClient()
+    api.onFetch = { (_) async throws(APIError<ErrorDto>) in
+        throw APIError.noConnection
+    }
+
+    let viewModel = UsersViewModel(api: api)
+    await viewModel.load(userId: 1)
+
+    #expect(viewModel.error == .noConnection)
+}
 ```
-║
-║ 􀇾 Error:    [􀙄 decode]
-║ 􀺾 valueNotFound
-║     data:
-║         items[1]:
-║             description: String 􀰌 􀃰 nil
-║
+
+### Uso inline (previews, debug)
+
+```swift
+var api = UsersAPIClient()
+if ProcessInfo.processInfo.environment["USE_MOCKS"] != nil {
+    api.onFetch = { _ in .stub }
+}
+```
+
+### Convención de nombres
+
+Cada método `func xyz(...)` genera `var onXyz`. Si hay overloads, se desambigua con el primer parámetro: `onUploadBody`, `onUploadUrl`.
+
+En producción las closures son `nil` y el client hace la llamada real — sin overhead.
+
+## Streaming (ByteStream)
+
+Para endpoints que devuelven datos de forma incremental (SSE, NDJSON, chunked), usa `task: .bytes`:
+
+```swift
+@API(host: "https://api.example.com", base: "/v1", auth: AuthManager.shared)
+protocol ChatAPI {
+    @Post("/completions", task: .bytes)
+    func complete(body request: CompletionRequest) async throws(APIError<ErrorDto>) -> ByteStream
+
+    @Get("/feed", task: .bytes)
+    func feed() async throws(APIError<ErrorDto>) -> ByteStream
+}
+```
+
+El macro genera la variante async throws. Para cancelar, cancela la `Task` que envuelve la iteración:
+
+```swift
+// Async throws (se cancela con Task.cancel / .task { } en SwiftUI)
+let stream = try await ChatAPIClient().complete(body: request)
+
+// Cancelación explícita
+let task = Task {
+    let stream = try await ChatAPIClient().complete(body: request)
+    for try await chunk in stream.sseEvents() {
+        self.text += chunk.delta
+    }
+}
+// Desde otro contexto:
+task.cancel()
+```
+
+### Consumir el stream
+
+`ByteStream` es un wrapper autenticado. El caller decide cómo parsearlo:
+
+```swift
+// Como JSON Lines (NDJSON) — cada línea es un JSON independiente
+for try await chunk in stream.jsonLines(CompletionChunk.self) {
+    self.text += chunk.delta
+}
+
+// Como Server-Sent Events (SSE) — protocolo text/event-stream
+for try await chunk in stream.sseEvents(CompletionChunk.self) {
+    self.text += chunk.delta
+}
+
+// SSE raw (acceso a event type, id, retry)
+for try await event in stream.sseRawEvents() {
+    switch event.event {
+    case "delta": handleDelta(event.data)
+    case "done": break
+    default: continue
+    }
+}
+
+// Líneas raw
+for try await line in stream.lines {
+    print(line)
+}
 ```
 
 ### Retry
-```
-│ ↻ Retry 1/2
-│ 􀁶 Request: A27B    􀋧 GET    ...
-```
 
----
+El `RetryPolicy` configurado aplica a la **conexión inicial**. Una vez que el stream está activo, los errores mid-stream se propagan directamente al caller.
 
-## Retry Policy
+## HTTPBody
 
-Retries are automatic for transient errors (5xx, timeout, connection lost, 401):
+Representa el cuerpo de un request saliente. Cada case determina el `Content-Type` implícitamente:
 
 ```swift
-Config(ServiceConfig(maxRetries: 2))
+// JSON (más común) — cualquier Encodable & Sendable
+let body: HTTPBody = .json(LoginRequest(email: "user@mail.com", password: "secret"))
+
+// Form URL-Encoded — para OAuth, APIs legacy
+let body: HTTPBody = .formURLEncoded([
+    URLQueryItem(name: "grant_type", value: "authorization_code"),
+    URLQueryItem(name: "code", value: authCode),
+    URLQueryItem(name: "client_id", value: clientId),
+    URLQueryItem(name: "redirect_uri", value: redirectURI)
+])
+
+// Raw data con content type explícito
+let body: HTTPBody = .data(videoData, contentType: .video(format: .mp4))
+let body: HTTPBody = .data(rawBytes) // default: application/octet-stream
+
+// Multipart form data (file uploads)
+let form = MultipartForm(
+    parameters: ["description": "Profile photo"],
+    media: [Media(url: photoURL, key: "file")]
+)
+let body: HTTPBody = .multipart(form)
 ```
 
-- **401** → invalidates token, retries with refreshed auth
-- **5xx / timeout / noConnection** → retries with exponential backoff (200ms, 400ms...)
-- **4xx (non-401) / decode errors** → fails immediately, no retry
+| Case | Content-Type |
+|------|-------------|
+| `.json(value)` | `application/json; charset=UTF-8` |
+| `.data(data, contentType:)` | Explicit (default: `application/octet-stream`) |
+| `.multipart(form)` | `multipart/form-data; boundary=...` |
+| `.formURLEncoded(items)` | `application/x-www-form-urlencoded` |
 
----
+## Autenticación
 
-## Error Types
+Beam ofrece tres tipos de auth provider que conforman `AuthProtocol`:
+
+### TokenAuth (refresh automático)
+
+Para tokens con expiración (Bearer, OAuth2). Gestiona auto-refresh, deduplicación de refresh concurrentes, y espera a token inicial:
 
 ```swift
-public enum ServiceError<Failure> {
-    // Serialization
-    case encode, decode, unsupportedType, typeMismatch
+// Bearer (por defecto aplica Authorization: Bearer <token>)
+let auth = TokenAuth {
+    let response = try await api.refreshToken()
+    return .init(value: response.accessToken, expiration: response.expiration)
+}
 
-    // Request
-    case invalidURL, invalidFormat, missingUploadData, missingToken, tokenExpired
+// Custom headers — el token se resuelve y se pasa al closure
+let auth = TokenAuth(
+    refresh: {
+        let response = try await api.refreshToken()
+        return .init(value: response.accessToken, expiration: response.expiration)
+    },
+    apply: { token, request in
+        request.addValue(clientId, forHTTPHeaderField: "client_id")
+        request.addValue(clientSecret, forHTTPHeaderField: "client_secret")
+        request.addValue(token.value, forHTTPHeaderField: "authToken")
+    }
+)
+```
 
-    // Network
-    case noConnection, timedOut, serverUnreachable, sslError, noResponse
+Lifecycle:
 
-    // Server
-    case http(status: HTTPStatus, body: Failure?)
+```swift
+// Tras login: proporcionar token inicial
+await auth.set(token: .init(value: jwt, expiration: expiry))
 
-    // System
-    case storage, cancelled, unknown
+// Tras logout: limpia estado, cancela refresh pendiente
+await auth.clear()
+```
+
+### SignedAuth (HMAC / firma por request)
+
+Para APIs que requieren una firma computada sobre el request (método, path, body, timestamp):
+
+```swift
+let auth = SignedAuth(name: "HMAC") { request in
+    let timestamp = "\(Int(Date.now.timeIntervalSince1970))"
+    let payload = [request.httpMethod ?? "GET", request.url?.path ?? "/", timestamp].joined(separator: "\n")
+    let signature = HMAC.sign(payload: payload, secret: secret)
+    request.addValue(apiKey, forHTTPHeaderField: "X-API-Key")
+    request.addValue(timestamp, forHTTPHeaderField: "X-Timestamp")
+    request.addValue(signature, forHTTPHeaderField: "X-Signature")
 }
 ```
 
-Each error has a unique icon for console identification and is reported to Firebase with a sanitized path:
-```
-GET /api/{id}/settings — decode (1)
-```
+### StaticAuth (API keys fijas)
 
----
-
-## SSL Pinning
-
-Pass certificates to the Client. If `certificates` is empty, pinning is disabled:
+Para credenciales que nunca cambian:
 
 ```swift
-Use(Client(certificates: [myCertData]))  // pinning enabled
-Use(Client())                            // no pinning
+let auth = StaticAuth(name: "APIKey") { request in
+    request.addValue("my-secret-key", forHTTPHeaderField: "X-API-Key")
+}
+
+// Múltiples headers estáticos
+let auth = StaticAuth(name: "Platform") { request in
+    request.addValue(apiKey, forHTTPHeaderField: "X-API-Key")
+    request.addValue(appId, forHTTPHeaderField: "X-App-ID")
+}
 ```
 
----
+### AuthProtocol (custom)
 
-## Requirements
+Para implementar un provider completamente custom:
 
-- iOS 18.0+
-- Swift 6 (strict concurrency)
-- Xcode 26+
+```swift
+actor MyAuth: AuthProtocol {
+    func authenticate(request: inout URLRequest) async throws {
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    }
+    func invalidate() async { /* mark token as stale */ }
+}
+```
+
+## Logging
+
+Beam incluye logging integrado con `os.Logger` y signposts. Configurable globalmente vía `BeamLog`:
+
+```swift
+// Ver bodies completos de request y response en consola:
+BeamLog.verbose = true
+
+// Cambiar nivel mínimo de log:
+BeamLog.level = .warning
+
+// Desactivar todo el logging:
+BeamLog.enabled = false
+```
+
+| Propiedad | Default | Efecto |
+|-----------|---------|--------|
+| `enabled` | `true` | Activa/desactiva todos los logs |
+| `level` | `.debug` | Nivel mínimo global (debug, info, warning, error, off) |
+| `verbose` | `false` | Imprime bodies completos (request y response) sin límite |
+
+Cada endpoint puede override el nivel con `logLevel:` en el init:
+
+```swift
+@Get("/noisy", config: .standard)
+func noisy() async throws(APIError<ErrorDto>) -> NoisyDto // uses global level
+
+// En código manual:
+let endpoint = Endpoint<T, E>(..., logLevel: .warning, api: request)
+```
+
+## Arquitectura
+
+```
+Beam/
+├── Service/
+│   ├── APIMacroSupport.swift   — @API, @Get, @Post... macro declarations
+│   ├── Handles.swift           — DownloadTask, UploadTask, ProgressHandler
+│   ├── RouteBuilder.swift      — _buildRoute() (usado por código generado)
+│   ├── Service.swift           — Core: retry, download, upload, websocket, error mapping
+│   └── RetryPolicy.swift       — Configuración de reintentos y StreamEvent
+├── Client/
+│   ├── Client.swift            — Actor URLSession con progress, cancel, SSL pinning
+│   ├── NetworkDelegate.swift   — URLSessionTaskDelegate para progreso y pinning
+│   └── URLSessionConformance.swift — SessionProtocol protocol
+├── Request/
+│   ├── APIRequest.swift        — Value type con method, host, path, headers, body
+│   ├── RequestBuilder.swift    — RequestBuilderState
+│   ├── RequestComponents.swift — Header, Use, Auth, Crash, Config, Intercept components
+│   ├── RequestConfig.swift     — Timeout, retry, ping interval
+│   └── RequestInterceptor.swift — Protocol para interceptar requests/responses
+├── Auth/                       — TokenAuth, SignedAuth, StaticAuth, AuthProtocol
+├── HTTP/                       — HTTPBody, HTTPMethod, HTTPStatus, MultipartForm, ContentType
+├── Error/                      — APIError<F>, ClientError, AuthError, SerializerError
+├── Serializer/                 — JSON encode/decode con soporte para Void, String, Data, UIImage
+└── Support/                    — Logger, FileUtils, CrashProtocol, SSEParser, JSONLinesParser
+```

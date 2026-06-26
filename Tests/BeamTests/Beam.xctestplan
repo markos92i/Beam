@@ -1,0 +1,38 @@
+{
+  "configurations" : [
+    {
+      "id" : "6E32BAC8-1871-4689-99C7-770D02461C3E",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+
+  },
+  "testTargets" : [
+    {
+      "skippedTests" : {
+        "suites" : [
+          {
+            "name" : "ResumeDataIntegrationTests"
+          }
+        ]
+      },
+      "target" : {
+        "containerPath" : "container:",
+        "identifier" : "BeamTests",
+        "name" : "BeamTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:",
+        "identifier" : "BeamMacrosTests",
+        "name" : "BeamMacrosTests"
+      }
+    }
+  ],
+  "version" : 1
+}
