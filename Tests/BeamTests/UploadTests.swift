@@ -68,7 +68,7 @@ struct UploadTests {
         #expect(result.id == mockBody.id)
     }
 
-    // MARK: - Handle (progress + cancel + resume)
+    // MARK: - Task (progress + cancel + resume)
 
     @Test
     func uploadResumeSuccess() async throws {
@@ -83,8 +83,8 @@ struct UploadTests {
         })
 
         let api = TestAPIClient(session: session)
-        let handle = api.uploadTask(body: UploadRequestMock(content: "Dummy"))
-        let result = try await handle.start(resumeFrom: resumeData)
+        let task = api.uploadTask(body: UploadRequestMock(content: "Dummy"))
+        let result = try await task.start(resumeFrom: resumeData)
         #expect(result.id == expectedResponse.id)
     }
 }

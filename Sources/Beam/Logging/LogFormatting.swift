@@ -14,6 +14,14 @@ extension Int {
         ByteCountFormatter.string(fromByteCount: Int64(self), countStyle: .file)
             .replacingOccurrences(of: " ", with: "")
     }
+
+    var statusIcon: String {
+        switch self {
+        case 200..<300: "􀁢"
+        case 300..<400: "􀅴"
+        default:        "􀁞"
+        }
+    }
 }
 
 // MARK: - String
@@ -26,13 +34,28 @@ extension String {
 
 extension Date {
     var elapsed: String {
-        let raw = Duration.seconds(-timeIntervalSinceNow)
-            .formatted(.units(
-                allowed: [.hours, .minutes, .seconds, .milliseconds],
-                width: .narrow,
-                maximumUnitCount: 2,
-                fractionalPart: .hide
-            ))
+        Duration.seconds(-timeIntervalSinceNow).formatted
+    }
+}
+
+// MARK: - TimeInterval
+
+extension TimeInterval {
+    var formatted: String {
+        Duration.seconds(self).formatted
+    }
+}
+
+// MARK: - Duration
+
+extension Duration {
+    var formatted: String {
+        let raw = self.formatted(.units(
+            allowed: [.hours, .minutes, .seconds, .milliseconds],
+            width: .narrow,
+            maximumUnitCount: 2,
+            fractionalPart: .hide
+        ))
         return raw.replacingOccurrences(of: #"(\d)\s+([\w])"#, with: "$1$2", options: .regularExpression)
     }
 }
@@ -52,10 +75,12 @@ extension URL {
         "􀉣 \(host() ?? "")"
     }
 
-    var pathAndQuery: String {
-        var result = "􀈕 \(path())"
-        if let query { result += "?\(query)" }
-        return result
+    var pathLabel: String {
+        "􀈕 \(path())"
+    }
+
+    var queryLabel: String? {
+        query.map { "􀊫 \($0)" }
     }
 }
 

@@ -34,10 +34,10 @@ public actor Client: Identifiable {
         operation: (URLSessionTaskDelegate) async throws -> (T, URLResponse)
     ) async throws(TransportError) -> (T, HTTPURLResponse) {
         let start = Date()
-        let signpostState = log.beginRequest(rid: id, method: request.httpMethod ?? "", path: request.url?.path() ?? "")
+        let signpostState = log.beginRequest(id: id, method: request.httpMethod ?? "", path: request.url?.path() ?? "")
 
         do {
-            log.log(.request(rid: id, method: request.httpMethod ?? "", url: request.url, headers: request.allHTTPHeaderFields, body: request.httpBody))
+            log.log(.request(id: id, method: request.httpMethod ?? "", url: request.url!, headers: request.allHTTPHeaderFields, body: request.httpBody))
 
             let delegate = TaskTrackingDelegate { [weak self] task in
                 Task { [weak self] in await self?.onTaskCreated(task: task) }
@@ -53,7 +53,7 @@ public actor Client: Identifiable {
             let body: LogEvent.Body = if let data = value as? Data { .data(data) }
                                       else if let url = value as? URL { .file(url) }
                                       else { .none }
-            log.log(.response(rid: id, status: httpResponse.statusCode, headers: httpResponse.allHeaderFields as? [String: String] ?? [:], body: body, start: start))
+            log.log(.response(id: id, status: httpResponse.statusCode, headers: httpResponse.allHeaderFields as? [String: String] ?? [:], body: body, start: start))
             log.endRequest(signpostState, status: httpResponse.statusCode)
             
             let status = HTTPStatus(rawValue: httpResponse.statusCode) ?? .undefined

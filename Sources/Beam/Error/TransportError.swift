@@ -16,18 +16,6 @@ public enum TransportError: Error, LoggableError {
     case http(status: HTTPStatus, body: Data?)
     case unknown(Error)
 
-    var description: String? {
-        switch self {
-        case .invalidURL: "The URL is invalid"
-        case .invalidResume: "The resume data is missing or is invalid"
-        case .noResponse: "Didnt receive response from server"
-        case .cancelled: "Task cancelled"
-        case .url(let error): error.localizedDescription
-        case .http(let status, _): "HTTP: \(status.rawValue)"
-        case .unknown(let error): error.localizedDescription
-        }
-    }
-
     public var status: HTTPStatus {
         if case .http(let status, _) = self { status } else { .undefined }
     }
@@ -38,12 +26,13 @@ public enum TransportError: Error, LoggableError {
 
     var logDescription: String {
         switch self {
-        case .url(let error):
-            return error.localizedDescription
-        case .unknown(let error):
-            return error.localizedDescription
-        default:
-            return description ?? ""
+        case .invalidURL: "The URL is invalid"
+        case .invalidResume: "The resume data is missing or is invalid"
+        case .noResponse: "Didnt receive response from server"
+        case .cancelled: "Task cancelled"
+        case .url(let error): error.localizedDescription
+        case .http(let status, _): "HTTP: \(status.rawValue)"
+        case .unknown(let error): error.localizedDescription
         }
     }
 

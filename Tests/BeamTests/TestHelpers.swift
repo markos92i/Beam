@@ -68,16 +68,6 @@ actor MockAuth: AuthProtocol {
     func invalidate() async { await onInvalidate() }
 }
 
-// MARK: - Auth Test Token
-
-struct TestToken: AuthToken, Sendable {
-    let id: String
-    let isValid: Bool
-
-    static let valid = TestToken(id: "valid-token", isValid: true)
-    static let expired = TestToken(id: "expired-token", isValid: false)
-}
-
 // MARK: - Response Models
 
 struct ResponseMock: Codable, Equatable, Sendable {

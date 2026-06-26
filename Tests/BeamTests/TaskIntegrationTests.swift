@@ -1,12 +1,12 @@
 //
-//  HandleIntegrationTests.swift
+//  TaskIntegrationTests.swift
 //  Beam
 //
 //  Integration tests for DownloadTask and UploadTask using the
 //  task-based path (downloadTask/uploadTask + delegate).
 //
 //  ⚠️ Requires internet. Run manually:
-//  swift test --filter "Handle Integration"
+//  swift test --filter "Task Integration"
 //
 
 import Foundation
@@ -20,32 +20,32 @@ import Testing
     base: "",
     headers: [:]
 )
-protocol HandleTestAPI {
+protocol TaskTestAPI {
     @Get("/get", task: .download)
     func downloadFile() async throws(APIError<Void>) -> URL
 
     @Post("/post", task: .upload)
-    func upload(body: HandleUploadBody) async throws(APIError<Void>) -> HandleUploadResponse
+    func upload(body: TaskUploadBody) async throws(APIError<Void>) -> TaskUploadResponse
 }
 
-struct HandleUploadBody: Codable, Sendable {
+struct TaskUploadBody: Codable, Sendable {
     let content: String
 }
 
-struct HandleUploadResponse: Codable, Sendable {
-    let json: HandleUploadBody?
+struct TaskUploadResponse: Codable, Sendable {
+    let json: TaskUploadBody?
 }
 
 // MARK: - Tests
 
-@Suite("Handle Integration", .tags(.network))
-struct HandleIntegrationTests {
+@Suite("Task Integration", .tags(.network))
+struct TaskIntegrationTests {
 
     @Test("DownloadTask downloads file via task-based path")
     func downloadSuccess() async throws {
-        let handle = HandleTestAPIClient().downloadFileTask()
-        #expect(!handle.id.isEmpty)
-        let url = try await handle.start()
+        let task = TaskTestAPIClient().downloadFileTask()
+        #expect(!task.id.isEmpty)
+        let url = try await task.start()
         let data = try Data(contentsOf: url)
         #expect(!data.isEmpty)
         try? FileManager.default.removeItem(at: url)
@@ -53,9 +53,9 @@ struct HandleIntegrationTests {
 
     @Test("UploadTask uploads and decodes response via task-based path")
     func uploadSuccess() async throws {
-        let handle = HandleTestAPIClient().uploadTask(body: HandleUploadBody(content: "test-beam"))
-        #expect(!handle.id.isEmpty)
-        let response = try await handle.start()
+        let task = TaskTestAPIClient().uploadTask(body: TaskUploadBody(content: "test-beam"))
+        #expect(!task.id.isEmpty)
+        let response = try await task.start()
         #expect(response.json?.content == "test-beam")
     }
 }

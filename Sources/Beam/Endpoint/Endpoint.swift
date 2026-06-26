@@ -56,7 +56,13 @@ public struct Endpoint<Success: Sendable, Failure: Sendable>: Sendable {
         let retryPolicy = config.retry
         for attempt in 0...retryPolicy.maxAttempts {
             do {
-                if attempt > 0 { log.log(.retry(rid: id, attempt: attempt, max: retryPolicy.maxAttempts)) }
+                if attempt > 0 {
+                    let delay = retryPolicy.delay(for: attempt)
+                    log.log(.retry(id: id, attempt: attempt, max: retryPolicy.maxAttempts, delay: delay))
+                    if delay > 0 {
+                        try? await Task.sleep(for: .seconds(delay))
+                    }
+                }
 
                 var finalRequest = try await request
                 for interceptor in interceptors {
@@ -70,11 +76,6 @@ public struct Endpoint<Success: Sendable, Failure: Sendable>: Sendable {
 
                 guard attempt < retryPolicy.maxAttempts, error.isRetryable else {
                     throw await mapError(error, attempt: attempt)
-                }
-
-                let delay = retryPolicy.delay(for: attempt + 1)
-                if delay > 0 {
-                    try? await Task.sleep(for: .seconds(delay))
                 }
             } catch {
                 throw await mapError(error, attempt: attempt)
@@ -271,62 +272,29 @@ extension Endpoint {
 
 extension Endpoint {
     func mapError(_ error: Error, attempt: Int) async -> APIError<Failure> {
-        let serviceError = parseError(error)
+        let serviceError = APIError<Failure>(error: error) { try? mapper.decode(data: $0) }
 
         guard !serviceError.isSilent else { return serviceError }
 
-        let description: String? = if let loggable = error as? LoggableError {
-            loggable.logDescription
-        } else {
-            serviceError.detail
-        }
-        log.log(.error(rid: id, icon: serviceError.icon, name: serviceError.name, detail: description, attempt: attempt))
+        let description = (error as? LoggableError)?.logDescription ?? serviceError.detail
+        log.log(.error(id: id, icon: serviceError.icon, name: serviceError.name, detail: description, attempt: attempt))
         reportError(serviceError, error: error, attempt: attempt)
 
         return serviceError
     }
 
-    private func parseError(_ error: Error) -> APIError<Failure> {
-        switch error {
-        case let error as APIError<Failure>:
-            return error
-        case let error as WebSocketError:
-            return APIError(from: error)
-        case let error as TransportError:
-            let body: Failure? = if let data = error.body, let decoded: Failure? = try? mapper.decode(data: data) { decoded } else { nil }
-            return APIError(from: error, body: body)
-        case let error as URLError:
-            return APIError(from: TransportError.url(error))
-        case let error as AuthError:
-            return APIError(from: error)
-        case let error as FileError:
-            return APIError(from: error)
-        case let error as MapperError:
-            return APIError(from: error)
-        default:
-            return .unknown
-        }
-    }
-
     private func reportError(_ serviceError: APIError<Failure>, error: Error, attempt: Int) {
-        var info: [String: String] = [
+        let description = (error as? LoggableError)?.logDescription ?? serviceError.detail
+
+        let info: [String: String] = [
             "Method": api.method.description,
             "Host": api.host,
             "Path": api.path,
-            "Attempt": "\(attempt)"
+            "Attempt": "\(attempt)",
+            "ErrorDetail": description
         ]
 
-        if let loggable = error as? LoggableError {
-            info["ErrorDetail"] = loggable.logDescription
-        }
-
         let sanitizedPath = api.path.replacing(/\/\d+/, with: "/{id}")
-        let description: String = switch error {
-        case let error as MapperError: error.logDescription
-        case let error as TransportError: error.description ?? serviceError.name
-        default: serviceError.name
-        }
-
         let reportError = NSError(
             domain: "\(api.method) \(sanitizedPath) — \(serviceError.name)",
             code: serviceError.id,

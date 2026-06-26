@@ -89,7 +89,7 @@ actor Socket<Success: Sendable, Failure: Sendable> {
 
         do {
             try await task.send(.data(data))
-            log.log(.wsSend(rid: id, type: "binary", size: data.count))
+            log.log(.wsSend(id: id, type: "binary", body: .data(data)))
         } catch {
             throw APIError<Failure>(from: WebSocketError.sendFailed(error))
         }
@@ -103,7 +103,7 @@ actor Socket<Success: Sendable, Failure: Sendable> {
 
         do {
             try await task.send(.data(data))
-            log.log(.wsSend(rid: id, type: "binary", size: data.count))
+            log.log(.wsSend(id: id, type: "binary", body: .data(data)))
         } catch {
             throw APIError<Failure>(from: WebSocketError.sendFailed(error))
         }
@@ -117,7 +117,7 @@ actor Socket<Success: Sendable, Failure: Sendable> {
 
         do {
             try await task.send(.string(text))
-            log.log(.wsSend(rid: id, type: "text", size: text.utf8.count))
+            log.log(.wsSend(id: id, type: "text", body: .data(text.data(using: .utf8) ?? Data())))
         } catch {
             throw APIError<Failure>(from: WebSocketError.sendFailed(error))
         }
@@ -129,7 +129,7 @@ actor Socket<Success: Sendable, Failure: Sendable> {
     func disconnect(code: URLSessionWebSocketTask.CloseCode = .normalClosure, reason: Data? = nil) {
         intentionalDisconnect = true
         let reasonStr = reason.flatMap { String(data: $0, encoding: .utf8) }
-        log.log(.wsClose(rid: id, code: code.rawValue, reason: reasonStr))
+        log.log(.wsClose(id: id, code: code.rawValue, reason: reasonStr))
         activeTask?.cancel(with: code, reason: reason)
         activeTask = nil
     }
@@ -163,7 +163,7 @@ actor Socket<Success: Sendable, Failure: Sendable> {
             let wsTask = session.webSocketTask(with: request)
             wsTask.resume()
             self.activeTask = wsTask
-            log.log(.wsOpen(rid: id, url: request.url, headers: request.allHTTPHeaderFields))
+            log.log(.wsOpen(id: id, url: request.url!, headers: request.allHTTPHeaderFields))
 
             // 2. Connected
             stateContinuation?.yield(.connected)
@@ -199,7 +199,7 @@ actor Socket<Success: Sendable, Failure: Sendable> {
 
             let delay = retryPolicy.delay(for: attempt)
             if delay > 0 {
-                log.log(.wsReconnect(rid: String(id.prefix(4)), attempt: attempt, delay: delay))
+                log.log(.wsReconnect(id: String(id.prefix(4)), attempt: attempt, max: retryPolicy.maxAttempts, delay: delay))
                 try? await Task.sleep(for: .seconds(delay))
             }
 
@@ -223,12 +223,12 @@ actor Socket<Success: Sendable, Failure: Sendable> {
         do {
             while wsTask.state == .running && !intentionalDisconnect {
                 let message = try await wsTask.receive()
-                let (type, size): (String, Int) = switch message {
-                case .string(let text): ("text", text.utf8.count)
-                case .data(let data): ("binary", data.count)
-                @unknown default: ("unknown", 0)
+                let (type, body): (String, LogEvent.Body) = switch message {
+                case .string(let text): ("text", .data(text.data(using: .utf8) ?? Data()))
+                case .data(let data): ("binary", .data(data))
+                @unknown default: ("unknown", .none)
                 }
-                log.log(.wsReceive(rid: id, type: type, size: size))
+                log.log(.wsReceive(id: id, type: type, body: body))
                 let decoded: Success = try deserialize(message: message, mapper: mapper)
                 continuation.yield(.message(decoded))
             }
@@ -258,7 +258,7 @@ actor Socket<Success: Sendable, Failure: Sendable> {
                             else { cont.resume() }
                         }
                     }
-                    log.log(.wsPing(rid: id))
+                    log.log(.wsPing(id: id))
                 } catch {
                     // Ping failed — force disconnect to break message loop
                     wsTask.cancel(with: .abnormalClosure, reason: nil)

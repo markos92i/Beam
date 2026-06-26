@@ -44,7 +44,7 @@ struct BackgroundTransferTests {
     // MARK: - Download
 
     @Test("Download completes via task-based path with background session")
-    func downloadWithBackgroundSession() async throws {
+    func backgroundDownloadDirect() async throws {
         let session = makeBackgroundSession()
         defer { session.invalidateAndCancel() }
 
@@ -60,7 +60,7 @@ struct BackgroundTransferTests {
     }
 
     @Test("Download via Endpoint task-based path with background session")
-    func downloadEndpointWithBackgroundSession() async throws {
+    func backgroundDownloadEndpoint() async throws {
         let session = makeBackgroundSession()
         defer { session.invalidateAndCancel() }
 
@@ -80,7 +80,7 @@ struct BackgroundTransferTests {
     // MARK: - Upload
 
     @Test("Upload completes via task-based path with background session")
-    func uploadWithBackgroundSession() async throws {
+    func backgroundUploadDirect() async throws {
         let session = makeBackgroundSession()
         defer { session.invalidateAndCancel() }
 
@@ -98,7 +98,7 @@ struct BackgroundTransferTests {
     }
 
     @Test("Upload from file via task-based path with background session")
-    func uploadFileWithBackgroundSession() async throws {
+    func backgroundUploadFile() async throws {
         let session = makeBackgroundSession()
         defer { session.invalidateAndCancel() }
 
@@ -133,10 +133,10 @@ struct BackgroundTransferTests {
             api: APIRequest(method: .get, host: "https://postman-echo.com", path: "/get")
         )
 
-        let handle = DownloadTask(endpoint: endpoint)
-        #expect(!handle.id.isEmpty)
+        let task = DownloadTask(endpoint: endpoint)
+        #expect(!task.id.isEmpty)
 
-        let url = try await handle.start()
+        let url = try await task.start()
         defer { try? FileManager.default.removeItem(at: url) }
 
         let data = try Data(contentsOf: url)
@@ -146,11 +146,11 @@ struct BackgroundTransferTests {
     // MARK: - UploadTask with background session
 
     @Test("UploadTask works end-to-end with background session")
-    func uploadHandleWithBackgroundSession() async throws {
+    func backgroundUploadTask() async throws {
         let session = makeBackgroundSession()
         defer { session.invalidateAndCancel() }
 
-        let body = BackgroundUploadBody(content: "handle-background-test")
+        let body = BackgroundUploadBody(content: "background-test")
         let bodyData = try JSONEncoder().encode(body)
 
         let endpoint = Endpoint<BackgroundUploadResponse, Void>(
@@ -164,10 +164,10 @@ struct BackgroundTransferTests {
             )
         )
 
-        let handle = UploadHandle(endpoint: endpoint)
-        #expect(!handle.id.isEmpty)
+        let task = UploadTask(endpoint: endpoint)
+        #expect(!task.id.isEmpty)
 
-        let result = try await handle.start(data: bodyData)
+        let result = try await task.start(data: bodyData)
         #expect(result.json?.content == "handle-background-test")
     }
 

@@ -41,7 +41,6 @@ public struct APIMacro: PeerMacro {
         var crash: String?
         var defaultError: String?
         var apiMapper: String?
-        var generateMock = false
 
         for arg in arguments {
             let label = arg.label?.text
@@ -54,7 +53,6 @@ public struct APIMacro: PeerMacro {
             case "auth": auth = value
             case "crash": crash = value
             case "mapper": apiMapper = value
-            case "mock": generateMock = value == "true"
             case "error":
                 defaultError = value.hasSuffix(".self") ? String(value.dropLast(5)) : value
             default: break
@@ -186,6 +184,10 @@ public struct APIMacro: PeerMacro {
 
         """
 
+        // Mock closure properties
+        output += generateMockProperties(functions: functions)
+        output += "\n"
+
         for fn in functions {
             output += generateFunction(fn)
             output += "\n"
@@ -193,13 +195,7 @@ public struct APIMacro: PeerMacro {
 
         output += "}"
 
-        var declarations: [DeclSyntax] = [DeclSyntax(stringLiteral: output)]
-
-        if generateMock {
-            declarations.append(DeclSyntax(stringLiteral: generateMockStruct(protocolName: protocolName, functions: functions)))
-        }
-
-        return declarations
+        return [DeclSyntax(stringLiteral: output)]
     }
 
     // MARK: - Helpers
@@ -498,10 +494,18 @@ public struct APIMacro: PeerMacro {
     }
 
     /// Generates the function body that wraps an endpoint call with optional progress tracking.
-    private static func functionBody(name: String, paramsStr: String, serviceInit: String, callExpr: String, throwsStr: String, returnStr: String) -> String {
-        """
+    private static func functionBody(name: String, paramsStr: String, serviceInit: String, callExpr: String, throwsStr: String, returnStr: String, mockName: String? = nil, mockCallArgs: String? = nil, isVoid: Bool = false) -> String {
+        var mockGuard = ""
+        if let mockName, let mockCallArgs {
+            if isVoid {
+                mockGuard = "if let mock = \(mockName) { try await mock(\(mockCallArgs)); return }\n            "
+            } else {
+                mockGuard = "if let mock = \(mockName) { return try await mock(\(mockCallArgs)) }\n            "
+            }
+        }
+        return """
             func \(name)(\(paramsStr)) async \(throwsStr)\(returnStr) {
-                \(serviceInit)
+                \(mockGuard)\(serviceInit)
                 \(callExpr)
             }
         """
@@ -514,7 +518,11 @@ public struct APIMacro: PeerMacro {
         let returnStr = fn.returnType != nil ? " -> \(successType)" : ""
         let serviceInit = buildServiceInit(successType: successType, failureType: failureType, path: path, method: fn.route.method, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, configOverride: fn.route.configOverride, mapperOverride: fn.route.mapperOverride, absoluteURL: hasAbsoluteURL)
 
-        return functionBody(name: fn.name, paramsStr: paramsStr, serviceInit: serviceInit, callExpr: "return try await endpoint.data()", throwsStr: throwsStr, returnStr: returnStr)
+        let mockName = "on\(fn.name.capitalizingFirst)"
+        let mockCallArgs = fn.params.map(\.internalName).joined(separator: ", ")
+        let isVoid = fn.returnType == nil
+
+        return functionBody(name: fn.name, paramsStr: paramsStr, serviceInit: serviceInit, callExpr: "return try await endpoint.data()", throwsStr: throwsStr, returnStr: returnStr, mockName: mockName, mockCallArgs: mockCallArgs, isVoid: isVoid)
     }
 
     private static func generateUploadFunction(_ fn: FunctionInfo, successType: String, failureType: String, paramsStr: String, throwsStr: String, path: String, bodyStr: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String, extraComponentsStr: String) -> String {
@@ -535,9 +543,9 @@ public struct APIMacro: PeerMacro {
         }.joined(separator: ", ")
         let forwarding = callArgs.isEmpty ? "onProgress: nil" : "\(callArgs), onProgress: nil"
 
-        // Handle factory params: exclude file URL since it's passed to start(url:) at call time
-        let handleParams = fn.params.filter { !($0.internalName == "url" && $0.type == "URL") }
-        let handleParamsStr = handleParams.map { param in
+        // Task factory params: exclude file URL since it's passed to start(url:) at call time
+        let taskParams = fn.params.filter { !($0.internalName == "url" && $0.type == "URL") }
+        let handleParamsStr = taskParams.map { param in
             let ext = param.externalName ?? param.internalName
             if ext == param.internalName {
                 return "\(ext): \(param.type)"
@@ -852,11 +860,10 @@ public struct APIMacro: PeerMacro {
         return "\"\(result)\""
     }
 
-    // MARK: - Mock Generation
+    // MARK: - Mock Properties
 
-    private static func generateMockStruct(protocolName: String, functions: [FunctionInfo]) -> String {
-        let mockName = "\(protocolName)Mock"
-        var output = "struct \(mockName): \(protocolName) {\n"
+    private static func generateMockProperties(functions: [FunctionInfo]) -> String {
+        var output = ""
 
         // Disambiguate overloaded names
         var nameCounts: [String: Int] = [:]
@@ -865,70 +872,30 @@ public struct APIMacro: PeerMacro {
         var nameOccurrences: [String: Int] = [:]
 
         for fn in functions {
-            let baseMockName = "\(fn.name)Mock"
-            let mockPropertyName: String
+            let baseName = "on\(fn.name.capitalizingFirst)"
+            let propertyName: String
 
             if nameCounts[fn.name, default: 0] > 1 {
-                // Disambiguate by appending first param's external label
                 nameOccurrences[fn.name, default: 0] += 1
                 if let firstParam = fn.params.first {
                     let label = (firstParam.externalName ?? firstParam.internalName).capitalizingFirst
-                    mockPropertyName = "\(fn.name)\(label)Mock"
+                    propertyName = "on\(fn.name.capitalizingFirst)\(label)"
                 } else {
-                    mockPropertyName = "\(baseMockName)\(nameOccurrences[fn.name]!)"
+                    propertyName = "\(baseName)\(nameOccurrences[fn.name]!)"
                 }
             } else {
-                mockPropertyName = baseMockName
+                propertyName = baseName
             }
 
             let successType = fn.returnType ?? "Void"
             let failureType = fn.failureType
             let throwsClause = "throws(APIError<\(failureType)>)"
-
-            // Closure parameter types
             let closureParamTypes = fn.params.map(\.type).joined(separator: ", ")
+            let closureType = "((\(closureParamTypes)) async \(throwsClause) -> \(successType))?"
 
-            // Closure type: (Params) async throws(APIError<F>) -> Success
-            let closureType = "(\(closureParamTypes)) async \(throwsClause) -> \(successType)"
-
-            // fatalError message
-            let fatalMessage = "\(mockName).\(fn.name) not stubbed"
-
-            // Default closure that crashes
-            let defaultClosure: String
-            if fn.params.isEmpty {
-                defaultClosure = "{ fatalError(\"\(fatalMessage)\") }"
-            } else {
-                let wildcards = fn.params.map { _ in "_" }.joined(separator: ", ")
-                defaultClosure = "{ \(wildcards) in fatalError(\"\(fatalMessage)\") }"
-            }
-
-            // Property declaration
-            output += "    var \(mockPropertyName): \(closureType) = \(defaultClosure)\n"
-
-            // Method signature (must match protocol exactly)
-            let paramsStr = fn.params.map { param in
-                let ext = param.externalName ?? param.internalName
-                if ext == param.internalName {
-                    return "\(ext): \(param.type)"
-                } else {
-                    return "\(ext) \(param.internalName): \(param.type)"
-                }
-            }.joined(separator: ", ")
-
-            let returnStr = fn.returnType != nil ? " -> \(successType)" : ""
-
-            // Call arguments (pass internal names to the closure)
-            let callArgs = fn.params.map(\.internalName).joined(separator: ", ")
-
-            // Method body
-            output += "\n"
-            output += "    func \(fn.name)(\(paramsStr)) async \(throwsClause)\(returnStr) {\n"
-            output += "        try await \(mockPropertyName)(\(callArgs))\n"
-            output += "    }\n\n"
+            output += "    nonisolated(unsafe) var \(propertyName): \(closureType)\n"
         }
 
-        output += "}"
         return output
     }
 }

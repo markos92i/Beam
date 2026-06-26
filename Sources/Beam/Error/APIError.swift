@@ -98,7 +98,7 @@ extension APIError {
 
     public var name: String {
         switch self {
-        case .http(let status, _): "http(\(status.rawValue)) \(status.name)"
+        case .http(let status, _): "http(\(status.rawValue))"
         case .encode: "encode"
         case .decode: "decode"
         case .unsupportedType: "unsupportedType"
@@ -139,15 +139,28 @@ extension APIError {
         }
     }
 
-    var detail: String? {
+    public var detail: String {
         switch self {
+        case .http(let status, _): status.name
+        case .encode: "Failed to encode request body"
+        case .decode: "Failed to decode response"
+        case .unsupportedType: "Response type is not supported"
+        case .typeMismatch: "Response type does not match expected"
         case .invalidURL: "Could not construct a valid URL from host and path"
         case .invalidFormat: "The response format is not valid"
         case .noResponse: "Server did not return an HTTP response"
         case .missingUploadData: "Upload body is empty — no data to send"
+        case .missingToken: "No authentication token available"
+        case .tokenExpired: "Authentication token has expired"
+        case .noConnection: "No internet connection"
+        case .timedOut: "Request timed out"
+        case .serverUnreachable: "Server is unreachable"
+        case .sslError: "SSL certificate validation failed"
+        case .cancelled: "Request was cancelled"
+        case .storage: "Storage operation failed"
         case .connectionClosed(let code, let reason):
             "WebSocket closed with code \(code)\(reason.map { ": \($0)" } ?? "")"
-        default: nil
+        case .unknown: "Unknown error"
         }
     }
 }
@@ -209,6 +222,20 @@ extension APIError {
             self = .connectionClosed(code: 1006, reason: "send failed")
         case .pingFailed:
             self = .connectionClosed(code: 1006, reason: "ping timeout")
+        }
+    }
+
+    /// Unified initializer that dispatches any error to the appropriate conversion.
+    init(error: Error, decodeBody: ((Data) -> Failure?)? = nil) {
+        switch error {
+        case let e as APIError<Failure>: self = e
+        case let e as TransportError:    self = APIError(from: e, body: e.body.flatMap { decodeBody?($0) })
+        case let e as URLError:          self = APIError(from: TransportError.url(e))
+        case let e as WebSocketError:    self = APIError(from: e)
+        case let e as AuthError:         self = APIError(from: e)
+        case let e as FileError:         self = APIError(from: e)
+        case let e as MapperError:       self = APIError(from: e)
+        default:                         self = .unknown
         }
     }
 }

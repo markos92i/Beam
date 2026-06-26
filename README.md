@@ -50,53 +50,53 @@ let url = try await FilesAPIClient().download(id: "abc", onProgress: { progress 
 })
 ```
 
-## Handles (progreso + cancelación + resume)
+## Tasks (progreso + cancelación + resume)
 
 Para operaciones que necesitan control granular: tracking en Live Activities, cancelación con resume data, o binding a vistas.
 
 ```swift
-// Crear handle con callback de progreso
-let handle = FilesAPIClient().uploadTask(body: .multipart(...)) { progress in
+// Crear task con callback de progreso
+let task = FilesAPIClient().uploadTask(body: .multipart(...)) { progress in
     self.state.progress = progress
 }
 
 // Trackear en Live Activity
-ProgressManager.shared.track(id: handle.id, message: "Subiendo archivo", stream: handle.progress)
+ProgressManager.shared.track(id: task.id, message: "Subiendo archivo", stream: task.progress)
 
 // Ejecutar
-try await handle.start()
+try await task.start()
 
 // Cancelar con resume data
-let resumeData = await handle.cancel()
+let resumeData = await task.cancel()
 
 // Reintentar desde donde se quedó
-try await handle.start(resumeFrom: resumeData)
+try await task.start(resumeFrom: resumeData)
 ```
 
-### Handle en SwiftUI (fullScreenCover)
+### UploadTask en SwiftUI (fullScreenCover)
 
-Los handles son `Identifiable`, se pueden usar como binding para presentar vistas:
+Los tasks son `Identifiable`, se pueden usar como binding para presentar vistas:
 
 ```swift
 @State var uploadService: UploadTask<Void, ErrorDto>?
 
 var body: some View {
     content
-        .fullScreenCover(item: $uploadService) { handle in
+        .fullScreenCover(item: $uploadService) { task in
             UploadProgressView(state: $state) {
-                Task { await handle.cancel() }
+                Task { await task.cancel() }
             }
         }
 }
 
 func upload() async {
-    let handle = FilesAPIClient().uploadTask(body: body) { progress in
+    let task = FilesAPIClient().uploadTask(body: body) { progress in
         self.state.progress = progress
     }
-    self.uploadService = handle
+    self.uploadService = task
 
     do {
-        try await handle.start()
+        try await task.start()
     } catch { ... }
 
     self.uploadService = nil
@@ -197,7 +197,7 @@ El macro genera diferentes implementaciones según la firma del método en el pr
 | `func upload(body: HTTPBody)` | `endpoint.upload()` | Sube el body serializado (multipart, json, etc.) en memoria |
 | `func upload(url: URL)` | `endpoint.upload(url:)` | Sube directamente desde archivo en disco — ideal para archivos grandes sin cargarlos en memoria |
 
-En todos los casos se generan las variantes con y sin `onProgress`, y el `Handle` correspondiente:
+En todos los casos se generan las variantes con y sin `onProgress`, y el `Task` correspondiente:
 
 ```swift
 // Protocolo
@@ -216,22 +216,22 @@ func uploadFromDisk(url: URL) async throws(APIError<ErrorDto>)
 El `UploadTask` expone métodos directos para cada variante:
 
 ```swift
-let handle = api.uploadHandle(body: body)
+let task = api.uploadTask(body: body)
 
 // Iniciar upload (usa body del endpoint)
-try await handle.start()
+try await task.start()
 
 // O subir desde archivo
-try await handle.start(url: fileURL)
+try await task.start(url: fileURL)
 
 // O subir data explícita
-try await handle.start(data: rawData)
+try await task.start(data: rawData)
 
 // Cancelar y obtener resume data
-let resumeData = await handle.cancel()
+let resumeData = await task.cancel()
 
 // Reanudar
-try await handle.start(resumeFrom: resumeData)
+try await task.start(resumeFrom: resumeData)
 ```
 
 ## Config por ruta
@@ -340,16 +340,15 @@ await connection.disconnect()
 let result = try await UsersAPIClient(client: Client(session: customSession)).fetch(id: 1)
 ```
 
-## Mock Generation
+## Mocking
 
-Para facilitar el testing sin dependencias de red, `@API` puede generar un mock automáticamente:
+El client generado por `@API` incluye closures opcionales `on*` para cada método. Si están configuradas, se usan en lugar de la llamada real — sin structs separados, sin flags, sin protocolos extra:
 
 ```swift
 @API(
     host: "https://api.example.com",
     base: "/v2/users",
-    auth: AuthManager.shared,
-    mock: true
+    auth: AuthManager.shared
 )
 protocol UsersAPI {
     @Get("/{id}")
@@ -363,20 +362,19 @@ protocol UsersAPI {
 }
 ```
 
-Con `mock: true`, el macro genera `UsersAPIMock` además del `UsersAPIClient`:
+El macro genera `UsersAPIClient` con las propiedades `onFetch`, `onCreate`, `onRemove`:
 
 ```swift
-struct UsersAPIMock: UsersAPI {
-    var fetchMock: (Int) async throws(APIError<ErrorDto>) -> UserDto = { _ in
-        fatalError("UsersAPIMock.fetch not stubbed")
+struct UsersAPIClient: UsersAPI {
+    var onFetch: ((Int) async throws(APIError<ErrorDto>) -> UserDto)?
+    var onCreate: ((CreateUserRequest) async throws(APIError<ErrorDto>) -> UserDto)?
+    var onRemove: ((Int) async throws(APIError<ErrorDto>) -> Void)?
+
+    func fetch(id: Int) async throws(APIError<ErrorDto>) -> UserDto {
+        if let mock = onFetch { return try await mock(id) }
+        // ... llamada real
     }
-    var createMock: (CreateUserRequest) async throws(APIError<ErrorDto>) -> UserDto = { _ in
-        fatalError("UsersAPIMock.create not stubbed")
-    }
-    var removeMock: (Int) async throws(APIError<ErrorDto>) -> Void = { _ in
-        fatalError("UsersAPIMock.remove not stubbed")
-    }
-    // + protocol-conforming methods that delegate to each handler
+    // ...
 }
 ```
 
@@ -384,33 +382,42 @@ struct UsersAPIMock: UsersAPI {
 
 ```swift
 @Test func fetchUser() async throws {
-    var mock = UsersAPIMock()
-    mock.fetchMock = { id in UserDto(id: id, name: "Test") }
+    var api = UsersAPIClient()
+    api.onFetch = { id in UserDto(id: id, name: "Test") }
 
-    let viewModel = UsersViewModel(api: mock)
+    let viewModel = UsersViewModel(api: api)
     await viewModel.load(userId: 42)
 
     #expect(viewModel.user?.name == "Test")
 }
 
 @Test func fetchUserError() async {
-    var mock = UsersAPIMock()
-    mock.fetchMock = { (_) async throws(APIError<ErrorDto>) in
+    var api = UsersAPIClient()
+    api.onFetch = { (_) async throws(APIError<ErrorDto>) in
         throw APIError.noConnection
     }
 
-    let viewModel = UsersViewModel(api: mock)
+    let viewModel = UsersViewModel(api: api)
     await viewModel.load(userId: 1)
 
     #expect(viewModel.error == .noConnection)
 }
 ```
 
+### Uso inline (previews, debug)
+
+```swift
+var api = UsersAPIClient()
+if ProcessInfo.processInfo.environment["USE_MOCKS"] != nil {
+    api.onFetch = { _ in .stub }
+}
+```
+
 ### Convención de nombres
 
-Cada método `func xyz(...)` genera una propiedad `var xyzMock`. Si hay overloads con el mismo nombre, se desambigua con el primer parámetro: `uploadBodyMock`, `uploadUrlMock`.
+Cada método `func xyz(...)` genera `var onXyz`. Si hay overloads, se desambigua con el primer parámetro: `onUploadBody`, `onUploadUrl`.
 
-Si `mock:` no se especifica (o es `false`), no se genera nada — la feature es completamente invisible.
+En producción las closures son `nil` y el client hace la llamada real — sin overhead.
 
 ## Streaming (ByteStream)
 
@@ -633,7 +640,7 @@ let endpoint = Endpoint<T, E>(..., logLevel: .warning, api: request)
 Beam/
 ├── Service/
 │   ├── APIMacroSupport.swift   — @API, @Get, @Post... macro declarations
-│   ├── Handles.swift           — DownloadHandle, UploadHandle, StreamHandle, ProgressHandler
+│   ├── Handles.swift           — DownloadTask, UploadTask, ProgressHandler
 │   ├── RouteBuilder.swift      — _buildRoute() (usado por código generado)
 │   ├── Service.swift           — Core: retry, download, upload, websocket, error mapping
 │   └── RetryPolicy.swift       — Configuración de reintentos y StreamEvent

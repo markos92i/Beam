@@ -21,23 +21,34 @@ public enum LogLevel: Int, Sendable, Comparable {
     public static func < (lhs: LogLevel, rhs: LogLevel) -> Bool {
         lhs.rawValue < rhs.rawValue
     }
+
+    /// Maps the semantic level to the corresponding `OSLogType`.
+    var osLogType: OSLogType {
+        switch self {
+        case .debug:   .debug
+        case .info:    .info
+        case .warning: .error
+        case .error:   .fault
+        case .off:     .info
+        }
+    }
 }
 
 // MARK: - BeamLogger
 
 /// Centralized logger with categories, signposts, and privacy.
-struct BeamLogger: Sendable {
+public struct BeamLogger: Sendable {
 
     // MARK: - Global Configuration
 
     /// Enables/disables all Beam logs globally.
-    nonisolated(unsafe) static var enabled = true
+    public nonisolated(unsafe) static var enabled = true
 
     /// Global minimum level. Used as fallback when no instance level is set.
-    nonisolated(unsafe) static var level: LogLevel = .debug
+    public nonisolated(unsafe) static var level: LogLevel = .debug
 
     /// When true, prints full request and response bodies to console.
-    nonisolated(unsafe) static var verbose = false
+    public nonisolated(unsafe) static var verbose = false
 
     // MARK: - Instance Configuration
 
@@ -57,12 +68,14 @@ struct BeamLogger: Sendable {
 
     // MARK: - Categorized Loggers
 
-    private let loggers: [LogEvent.LogCategory: os.Logger] = [
-        .http: os.Logger(subsystem: BeamLogger.subsystem, category: "http"),
-        .websocket: os.Logger(subsystem: BeamLogger.subsystem, category: "websocket"),
-        .auth: os.Logger(subsystem: BeamLogger.subsystem, category: "auth"),
-        .error: os.Logger(subsystem: BeamLogger.subsystem, category: "error")
-    ]
+    private func logger(for category: LogEvent.LogCategory) -> os.Logger {
+        switch category {
+        case .http:      os.Logger(subsystem: Self.subsystem, category: "http")
+        case .websocket: os.Logger(subsystem: Self.subsystem, category: "websocket")
+        case .auth:      os.Logger(subsystem: Self.subsystem, category: "auth")
+        case .error:     os.Logger(subsystem: Self.subsystem, category: "error")
+        }
+    }
 
     // MARK: - Signposts
 
@@ -76,19 +89,18 @@ struct BeamLogger: Sendable {
 
     /// Logs a structured event. Guard, format, and emit happen in one place.
     func log(_ event: LogEvent) {
-        guard Self.enabled, effectiveLevel <= event.level else { return }
+        guard Self.enabled, effectiveLevel <= event.meta.level else { return }
 
-        let lines = event.lines(verbose: Self.verbose, maxBodySize: maxBodySize)
-        let block = LogBlock(lines, style: event.style)
-        let logger = loggers[event.category]!
-        emit(block, to: logger, level: event.osLevel)
+        let config = RenderConfig(verbose: Self.verbose, maxBodySize: maxBodySize)
+        let output = event.rendered(in: config)
+        emit(output, to: logger(for: event.meta.category), level: event.meta.level.osLogType)
     }
 
     // MARK: - Signpost API
 
     /// Begins a signpost interval for an HTTP request.
-    func beginRequest(rid: String, method: String, path: String) -> OSSignpostIntervalState {
-        signposter.beginInterval("request", id: .exclusive, "\(method, privacy: .public) \(path, privacy: .public) [\(rid, privacy: .public)]")
+    func beginRequest(id: String, method: String, path: String) -> OSSignpostIntervalState {
+        signposter.beginInterval("request", id: .exclusive, "\(method, privacy: .public) \(path, privacy: .public) [\(id, privacy: .public)]")
     }
 
     /// Ends the signpost interval for an HTTP request.
@@ -98,9 +110,8 @@ struct BeamLogger: Sendable {
 
     // MARK: - Emit
 
-    /// Renders the block and sends it to the os.Logger at the given level.
-    private func emit(_ block: LogBlock, to logger: os.Logger, level: OSLogType = .info) {
-        let output = block.rendered()
+    /// Sends the rendered output to the os.Logger at the given level.
+    private func emit(_ output: String, to logger: os.Logger, level: OSLogType = .info) {
         switch level {
         case .debug: logger.debug("\(output, privacy: .public)")
         case .info: logger.info("\(output, privacy: .public)")

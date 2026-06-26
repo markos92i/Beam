@@ -2,20 +2,16 @@
 //  MockIntegrationTests.swift
 //  Beam
 //
-//  Integration tests verifying generated mocks are usable end-to-end.
+//  Integration tests for inline mock closures on generated API clients.
 //
 
-import Foundation
 import Testing
-@testable import Beam
-
-// MARK: - Mockable API
+import Beam
 
 @API(
     host: "https://mock-test.com",
     base: "/v1",
-    headers: [:],
-    mock: true
+    headers: [:]
 )
 protocol MockableAPI {
     @Get("/items/{id}")
@@ -37,10 +33,10 @@ struct MockIntegrationTests {
     func mockReturnsSuccess() async throws {
         let expected = ResponseMock(id: "abc", value: 42)
 
-        var mock = MockableAPIMock()
-        mock.fetchMock = { _ in expected }
+        var api = MockableAPIClient()
+        api.onFetch = { _ in expected }
 
-        let result = try await mock.fetch(id: 1)
+        let result = try await api.fetch(id: 1)
         #expect(result == expected)
     }
 
@@ -48,26 +44,26 @@ struct MockIntegrationTests {
     func mockReceivesParams() async throws {
         var receivedId: Int?
 
-        var mock = MockableAPIMock()
-        mock.fetchMock = { id in
+        var api = MockableAPIClient()
+        api.onFetch = { id in
             receivedId = id
             return ResponseMock(id: "test", value: id)
         }
 
-        let result = try await mock.fetch(id: 99)
+        let result = try await api.fetch(id: 99)
         #expect(receivedId == 99)
         #expect(result.value == 99)
     }
 
     @Test("Mock throws typed error")
     func mockThrowsError() async {
-        var mock = MockableAPIMock()
-        mock.fetchMock = { (_) async throws(APIError<Void>) in
+        var api = MockableAPIClient()
+        api.onFetch = { (_) async throws(APIError<Void>) in
             throw APIError.noConnection
         }
 
         do {
-            _ = try await mock.fetch(id: 1)
+            _ = try await api.fetch(id: 1)
             Issue.record("Expected error to be thrown")
         } catch let error {
             #expect(error == .noConnection)
@@ -78,13 +74,13 @@ struct MockIntegrationTests {
     func mockWithBody() async throws {
         var receivedContent: String?
 
-        var mock = MockableAPIMock()
-        mock.createMock = { request in
+        var api = MockableAPIClient()
+        api.onCreate = { request in
             receivedContent = request.content
             return ResponseMock(id: "new", value: 1)
         }
 
-        let result = try await mock.create(body: UploadRequestMock(content: "hello"))
+        let result = try await api.create(body: UploadRequestMock(content: "hello"))
         #expect(receivedContent == "hello")
         #expect(result.id == "new")
     }
@@ -93,22 +89,22 @@ struct MockIntegrationTests {
     func mockVoidReturn() async throws {
         var called = false
 
-        var mock = MockableAPIMock()
-        mock.removeMock = { _ in called = true }
+        var api = MockableAPIClient()
+        api.onRemove = { _ in called = true }
 
-        try await mock.remove(id: 5)
+        try await api.remove(id: 5)
         #expect(called)
     }
 
     @Test("Mock Void-returning method can throw")
     func mockVoidThrows() async {
-        var mock = MockableAPIMock()
-        mock.removeMock = { (_) async throws(APIError<Void>) in
+        var api = MockableAPIClient()
+        api.onRemove = { (_) async throws(APIError<Void>) in
             throw APIError.http(status: .forbidden)
         }
 
         do {
-            try await mock.remove(id: 1)
+            try await api.remove(id: 1)
             Issue.record("Expected error to be thrown")
         } catch let error {
             #expect(error == .http(status: .forbidden))
