@@ -20,7 +20,7 @@ public enum AuthError: Error, LoggableError, Sendable, Equatable {
         case .invalidCredentials:
             "Credentials rejected by server"
         case .failedToRefreshToken:
-            "Token refresh failed — session expired"
+            "Token refresh failed"
         case .cancelled:
             "Authentication cancelled"
         }

@@ -14,7 +14,7 @@ public struct RequestConfig: Sendable, Equatable {
 
     public init(
         retry: RetryPolicy = .standard,
-        timeout: TimeInterval = 60,
+        timeout: TimeInterval = 30,
         pingInterval: TimeInterval? = nil
     ) {
         self.retry = retry
