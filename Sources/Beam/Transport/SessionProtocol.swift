@@ -27,20 +27,17 @@ public protocol SessionProtocol: Sendable {
 extension URLSession: SessionProtocol {}
 
 extension URLSession {
+    /// Resumes an upload from stored resume data using delegate-based callbacks.
+    ///
+    /// Uses `uploadTask(withResumeData:)` (no completion handler) so it is
+    /// compatible with background sessions. The provided `delegate` is notified
+    /// of task creation for progress tracking; response data and completion are
+    /// handled internally via `UploadTransferDelegate`.
     public func upload(resumeFrom data: Data, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse) {
-        try await withCheckedThrowingContinuation { continuation in
-            let task = self.uploadTask(withResumeData: data) { data, response, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                guard let data, let response else {
-                    continuation.resume(throwing: URLError(.badServerResponse))
-                    return
-                }
-                continuation.resume(returning: (data, response))
-            }
-            task.delegate = delegate
+        let task = self.uploadTask(withResumeData: data)
+        delegate?.urlSession?(self, didCreateTask: task)
+        return try await withCheckedThrowingContinuation { continuation in
+            task.delegate = UploadTransferDelegate(continuation: continuation)
             task.resume()
         }
     }
