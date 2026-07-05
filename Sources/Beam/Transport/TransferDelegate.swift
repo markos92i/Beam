@@ -13,31 +13,46 @@ import Foundation
 
 /// Bridges `URLSessionDownloadDelegate` completion to a `CheckedContinuation`.
 /// Only handles the result delivery — progress comes from `task.progress`.
-final class DownloadTransferDelegate: NSObject, URLSessionDownloadDelegate, Sendable {
+///
+/// Guards against permanent hangs: if `didCompleteWithError` arrives with nil
+/// but `didFinishDownloadingTo` was never called, the continuation is resumed
+/// with an error instead of hanging indefinitely.
+final class DownloadTransferDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     private let continuation: CheckedContinuation<(URL, URLResponse), Error>
+    private var didResume = false
 
     init(continuation: CheckedContinuation<(URL, URLResponse), Error>) {
         self.continuation = continuation
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        guard !didResume else { return }
         // URLSession deletes the file after this method returns — copy to a safe location
         let safeCopy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         do {
             try FileManager.default.copyItem(at: location, to: safeCopy)
             guard let response = downloadTask.response else {
+                didResume = true
                 continuation.resume(throwing: URLError(.badServerResponse))
                 return
             }
+            didResume = true
             continuation.resume(returning: (safeCopy, response))
         } catch {
+            didResume = true
             continuation.resume(throwing: error)
         }
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
+        guard !didResume else { return }
+        didResume = true
+
         if let error {
             continuation.resume(throwing: error)
+        } else {
+            // didFinishDownloadingTo was never called — treat as failed transfer
+            continuation.resume(throwing: URLError(.cannotParseResponse))
         }
     }
 }
@@ -46,9 +61,13 @@ final class DownloadTransferDelegate: NSObject, URLSessionDownloadDelegate, Send
 
 /// Bridges `URLSessionDataDelegate` completion to a `CheckedContinuation`.
 /// Accumulates response data chunks and delivers the final result.
+///
+/// Includes a `didResume` guard to prevent double-resume in edge cases
+/// where delegate callbacks fire unexpectedly after completion.
 final class UploadTransferDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let continuation: CheckedContinuation<(Data, URLResponse), Error>
     private var responseData = Data()
+    private var didResume = false
 
     init(continuation: CheckedContinuation<(Data, URLResponse), Error>) {
         self.continuation = continuation
@@ -58,7 +77,10 @@ final class UploadTransferDelegate: NSObject, URLSessionDataDelegate, @unchecked
         responseData.append(data)
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
+        guard !didResume else { return }
+        didResume = true
+
         if let error {
             continuation.resume(throwing: error)
         } else {

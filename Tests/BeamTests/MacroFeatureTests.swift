@@ -50,10 +50,10 @@ protocol OptionalQueryAPI {
     headers: [:]
 )
 protocol ConfigOverrideAPI {
-    @Get("/resilient", config: RequestConfig(retry: .resilient, timeout: 120))
+    @Get("/resilient", timeout: 120, retry: .resilient)
     func resilientFetch() async throws(APIError<Void>) -> ResponseMock
 
-    @Post("/fast", config: RequestConfig(retry: .none, timeout: 5))
+    @Post("/fast", timeout: 5, retry: .none)
     func fastPost(body: ResponseMock) async throws(APIError<Void>)
 }
 

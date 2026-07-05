@@ -57,6 +57,7 @@ public actor TokenAuth: AuthProtocol {
 
     private let name: String
     private let onRefresh: @Sendable () async throws -> Token
+    private let onSessionLost: (@Sendable () async -> Void)?
     private let applyToken: @Sendable (Token, inout URLRequest) -> Void
     private let log = BeamLogger()
 
@@ -75,12 +76,16 @@ public actor TokenAuth: AuthProtocol {
     /// - Parameters:
     ///   - name: Identifier for this auth provider (used in logs).
     ///   - refresh: Called when a new token is needed (expired or invalidated).
+    ///   - onSessionLost: Called when the session is irrecoverably lost (refresh failed with invalid credentials).
+    ///     Use this to clear local state and navigate to login. No network calls should be made here.
     public init(
         name: String = "Auth",
-        refresh: @escaping @Sendable () async throws(AuthError) -> Token
+        refresh: @escaping @Sendable () async throws(AuthError) -> Token,
+        onSessionLost: (@Sendable () async -> Void)? = nil
     ) {
         self.name = name
         self.onRefresh = refresh
+        self.onSessionLost = onSessionLost
         self.applyToken = { token, request in
             request.addValue("Bearer \(token.value)", forHTTPHeaderField: "Authorization")
         }
@@ -91,14 +96,17 @@ public actor TokenAuth: AuthProtocol {
     /// - Parameters:
     ///   - name: Identifier for this auth provider (used in logs).
     ///   - refresh: Called when a new token is needed (expired or invalidated).
+    ///   - onSessionLost: Called when the session is irrecoverably lost (refresh failed with invalid credentials).
     ///   - apply: Closure that applies the resolved token to the outgoing request.
     public init(
         name: String = "Auth",
         refresh: @escaping @Sendable () async throws(AuthError) -> Token,
+        onSessionLost: (@Sendable () async -> Void)? = nil,
         apply: @escaping @Sendable (Token, inout URLRequest) -> Void
     ) {
         self.name = name
         self.onRefresh = refresh
+        self.onSessionLost = onSessionLost
         self.applyToken = apply
     }
 
@@ -167,6 +175,7 @@ public actor TokenAuth: AuthProtocol {
                 return newToken
             } catch AuthError.invalidCredentials {
                 self.clear()
+                await onSessionLost?()
                 throw AuthError.invalidCredentials
             } catch is CancellationError {
                 throw AuthError.cancelled

@@ -246,3 +246,32 @@ extension APIError: Equatable {
         lhs.id == rhs.id
     }
 }
+
+// MARK: - Type erasure
+
+extension APIError {
+    /// Converts `APIError<T>` to `APIError<Void>`, dropping the typed body.
+    public var asVoid: APIError<Void> {
+        switch self {
+        case .encode: .encode
+        case .decode: .decode
+        case .unsupportedType: .unsupportedType
+        case .typeMismatch: .typeMismatch
+        case .invalidURL: .invalidURL
+        case .invalidFormat: .invalidFormat
+        case .missingUploadData: .missingUploadData
+        case .missingToken: .missingToken
+        case .tokenExpired: .tokenExpired
+        case .noConnection: .noConnection
+        case .timedOut: .timedOut
+        case .serverUnreachable: .serverUnreachable
+        case .sslError: .sslError
+        case .noResponse: .noResponse
+        case .connectionClosed(let code, let reason): .connectionClosed(code: code, reason: reason)
+        case .http(let status, _): .http(status: status)
+        case .storage: .storage
+        case .cancelled: .cancelled
+        case .unknown: .unknown
+        }
+    }
+}

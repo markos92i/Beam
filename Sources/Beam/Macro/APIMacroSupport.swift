@@ -63,43 +63,43 @@ public macro API(
 
 /// GET endpoint. Path params use `{name}` syntax.
 @attached(peer)
-public macro Get(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], auth: AuthPolicy = .required, config: RequestConfig? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "GetMacro")
+public macro Get(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "GetMacro")
 
 /// POST endpoint.
 @attached(peer)
-public macro Post(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], auth: AuthPolicy = .required, config: RequestConfig? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "PostMacro")
+public macro Post(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "PostMacro")
 
 /// PUT endpoint.
 @attached(peer)
-public macro Put(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], auth: AuthPolicy = .required, config: RequestConfig? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "PutMacro")
+public macro Put(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "PutMacro")
 
 /// DELETE endpoint.
 @attached(peer)
-public macro Delete(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], auth: AuthPolicy = .required, config: RequestConfig? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "DeleteMacro")
+public macro Delete(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "DeleteMacro")
 
 /// PATCH endpoint.
 @attached(peer)
-public macro Patch(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], auth: AuthPolicy = .required, config: RequestConfig? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "PatchMacro")
+public macro Patch(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "PatchMacro")
 
 /// HEAD endpoint.
 @attached(peer)
-public macro Head(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], auth: AuthPolicy = .required, config: RequestConfig? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "HeadMacro")
+public macro Head(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "HeadMacro")
 
 /// OPTIONS endpoint.
 @attached(peer)
-public macro Options(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], auth: AuthPolicy = .required, config: RequestConfig? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "OptionsMacro")
+public macro Options(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "OptionsMacro")
 
 /// CONNECT endpoint.
 @attached(peer)
-public macro Connect(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], auth: AuthPolicy = .required, config: RequestConfig? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "ConnectMacro")
+public macro Connect(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "ConnectMacro")
 
 /// TRACE endpoint.
 @attached(peer)
-public macro Trace(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], auth: AuthPolicy = .required, config: RequestConfig? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "TraceMacro")
+public macro Trace(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "TraceMacro")
 
 /// WebSocket endpoint. Opens a persistent bidirectional connection (GET + upgrade).
 @attached(peer)
-public macro Socket(_ path: String = "", headers: [String: String] = [:], auth: AuthPolicy = .required, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "SocketMacro")
+public macro Socket(_ path: String = "", headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "SocketMacro")
 
 // MARK: - Supporting Types
 
@@ -126,6 +126,7 @@ public struct _APIConfiguration: Sendable {
     public let auth: (any AuthProtocol)?
     public let crash: (any CrashProtocol)?
     public let mapper: any MapperProtocol
+    public let config: RequestConfig
     public let interceptors: [any RequestInterceptor]
     public let logLevel: LogLevel?
 
@@ -137,6 +138,7 @@ public struct _APIConfiguration: Sendable {
         auth: (any AuthProtocol)? = nil,
         crash: (any CrashProtocol)? = nil,
         mapper: any MapperProtocol = Mapper(),
+        config: RequestConfig = .standard,
         interceptors: [any RequestInterceptor] = [],
         logLevel: LogLevel? = nil
     ) {
@@ -147,6 +149,7 @@ public struct _APIConfiguration: Sendable {
         self.auth = auth
         self.crash = crash
         self.mapper = mapper
+        self.config = config
         self.interceptors = interceptors
         self.logLevel = logLevel
     }

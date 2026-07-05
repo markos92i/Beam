@@ -31,7 +31,7 @@ public actor Client: Identifiable {
 
     private func execute<T>(
         for request: URLRequest,
-        operation: (URLSessionTaskDelegate) async throws -> (T, URLResponse)
+        operation: (URLSessionTaskDelegate) async throws -> sending (T, URLResponse)
     ) async throws(TransportError) -> (T, HTTPURLResponse) {
         let start = Date()
         let signpostState = log.beginRequest(id: id, method: request.httpMethod ?? "", path: request.url?.path() ?? "")
