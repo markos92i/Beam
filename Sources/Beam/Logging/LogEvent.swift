@@ -51,30 +51,18 @@ extension LogEvent {
 
     var meta: EventMeta {
         switch self {
-        case .request:
-            EventMeta(level: .info, category: .http, style: .pipe)
-        case .response(_, let status, _, _, _):
-            EventMeta(level: status >= 500 ? .warning : .info, category: .http, style: .pipe)
-        case .retry:
-            EventMeta(level: .info, category: .http, style: .pipe)
-        case .error:
-            EventMeta(level: .error, category: .error, style: .pipe)
-        case .wsOpen:
-            EventMeta(level: .info, category: .websocket, style: .pipe)
-        case .wsSend:
-            EventMeta(level: .debug, category: .websocket, style: .pipe)
-        case .wsReceive:
-            EventMeta(level: .debug, category: .websocket, style: .pipe)
-        case .wsClose:
-            EventMeta(level: .info, category: .websocket, style: .pipe)
-        case .wsPing:
-            EventMeta(level: .debug, category: .websocket, style: .pipe)
-        case .wsReconnect:
-            EventMeta(level: .warning, category: .websocket, style: .pipe)
-        case .auth(_, _, let detail):
-            EventMeta(level: detail == "rejected" ? .debug : .info, category: .auth, style: .pipe)
-        case .interceptor:
-            EventMeta(level: .debug, category: .http, style: .pipe)
+        case .request:      .init(level: .info, category: .http, style: .none)
+        case .response(_, let status, _, _, _): .init(level: status >= 500 ? .warning : .info, category: .http, style: .none)
+        case .retry:        .init(level: .info, category: .http, style: .none)
+        case .error:        .init(level: .error, category: .error, style: .none)
+        case .wsOpen:       .init(level: .info, category: .websocket, style: .none)
+        case .wsSend:       .init(level: .debug, category: .websocket, style: .none)
+        case .wsReceive:    .init(level: .debug, category: .websocket, style: .none)
+        case .wsClose:      .init(level: .info, category: .websocket, style: .none)
+        case .wsPing:       .init(level: .debug, category: .websocket, style: .none)
+        case .wsReconnect:  .init(level: .warning, category: .websocket, style: .none)
+        case .auth(_, _, let detail): .init(level: detail == "rejected" ? .debug : .info, category: .auth, style: .none)
+        case .interceptor:  .init(level: .debug, category: .http, style: .none)
         }
     }
 

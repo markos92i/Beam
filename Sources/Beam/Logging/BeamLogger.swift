@@ -48,7 +48,7 @@ public struct BeamLogger: Sendable {
     public nonisolated(unsafe) static var level: LogLevel = .debug
 
     /// When true, prints full request and response bodies to console.
-    public nonisolated(unsafe) static var verbose = false
+    public nonisolated(unsafe) static var verbose = true
 
     // MARK: - Instance Configuration
 

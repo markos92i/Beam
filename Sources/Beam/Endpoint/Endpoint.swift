@@ -19,7 +19,6 @@ public struct Endpoint<Success: Sendable, Failure: Sendable>: Sendable {
     public let crash: (any CrashProtocol)?
     public let mapper: any MapperProtocol
     public let config: RequestConfig
-    public let authPolicy: AuthPolicy
     public let interceptors: [any RequestInterceptor]
     public let api: APIRequest
 
@@ -31,7 +30,6 @@ public struct Endpoint<Success: Sendable, Failure: Sendable>: Sendable {
         crash: (any CrashProtocol)? = nil,
         mapper: any MapperProtocol = Mapper(),
         config: RequestConfig = .standard,
-        authPolicy: AuthPolicy = .required,
         interceptors: [any RequestInterceptor] = [],
         logLevel: LogLevel? = nil,
         api: APIRequest
@@ -42,7 +40,6 @@ public struct Endpoint<Success: Sendable, Failure: Sendable>: Sendable {
         self.crash = crash
         self.mapper = mapper
         self.config = config
-        self.authPolicy = authPolicy
         self.interceptors = interceptors
         self.api = api
         self.log = BeamLogger(level: logLevel)
@@ -51,7 +48,7 @@ public struct Endpoint<Success: Sendable, Failure: Sendable>: Sendable {
     // MARK: - Core (retry + interceptors)
 
     private func perform<Output>(
-        operation: (URLRequest) async throws -> Output
+        operation: (URLRequest) async throws -> sending Output
     ) async throws(APIError<Failure>) -> Output {
         let retryPolicy = config.retry
         for attempt in 0...retryPolicy.maxAttempts {
@@ -289,7 +286,7 @@ extension Endpoint {
             request.timeoutInterval = config.timeout
 
             if let auth {
-                switch authPolicy {
+                switch config.authPolicy {
                 case .required: try await auth.authenticate(request: &request)
                 case .optional: try? await auth.authenticate(request: &request)
                 }
