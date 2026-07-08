@@ -398,6 +398,7 @@ public struct APIMacro: PeerMacro {
 
         let throwsStr = "throws(APIError<\(failureType)>)"
         let path = transformPath(fn.route.path, params: fn.params)
+        let pathTemplate = fn.route.path
 
         // Body
         let bodyParam = fn.params.first(where: { $0.role == .body })
@@ -472,15 +473,15 @@ public struct APIMacro: PeerMacro {
         // Generate based on task kind
         switch fn.route.taskKind {
         case "stream":
-            return generateStreamFunction(fn, successType: successType, failureType: failureType, paramsStr: paramsStr, path: path, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr)
+            return generateStreamFunction(fn, successType: successType, failureType: failureType, paramsStr: paramsStr, path: path, pathTemplate: pathTemplate, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr)
         case "upload":
-            return generateUploadFunction(fn, successType: successType, failureType: failureType, paramsStr: paramsStr, throwsStr: throwsStr, path: path, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr)
+            return generateUploadFunction(fn, successType: successType, failureType: failureType, paramsStr: paramsStr, throwsStr: throwsStr, path: path, pathTemplate: pathTemplate, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr)
         case "download":
-            return generateDownloadFunction(fn, failureType: failureType, paramsStr: paramsStr, throwsStr: throwsStr, path: path, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr)
+            return generateDownloadFunction(fn, failureType: failureType, paramsStr: paramsStr, throwsStr: throwsStr, path: path, pathTemplate: pathTemplate, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr)
         case "bytes":
-            return generateBytesFunction(fn, successType: successType, failureType: failureType, paramsStr: paramsStr, throwsStr: throwsStr, path: path, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr)
+            return generateBytesFunction(fn, successType: successType, failureType: failureType, paramsStr: paramsStr, throwsStr: throwsStr, path: path, pathTemplate: pathTemplate, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr)
         default:
-            return generateDataFunction(fn, successType: successType, failureType: failureType, paramsStr: paramsStr, throwsStr: throwsStr, path: path, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr)
+            return generateDataFunction(fn, successType: successType, failureType: failureType, paramsStr: paramsStr, throwsStr: throwsStr, path: path, pathTemplate: pathTemplate, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr)
         }
     }
 
@@ -511,10 +512,10 @@ public struct APIMacro: PeerMacro {
 
     // MARK: - Task-Specific Generators
 
-    private static func generateDataFunction(_ fn: FunctionInfo, successType: String, failureType: String, paramsStr: String, throwsStr: String, path: String, bodyStr: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String) -> String {
+    private static func generateDataFunction(_ fn: FunctionInfo, successType: String, failureType: String, paramsStr: String, throwsStr: String, path: String, pathTemplate: String, bodyStr: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String) -> String {
         let hasAbsoluteURL = fn.params.contains { $0.role == .absoluteURL }
         let returnStr = fn.returnType != nil ? " -> \(successType)" : ""
-        let serviceInit = buildServiceInit(successType: successType, failureType: failureType, path: path, method: fn.route.method, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, timeout: fn.route.timeout, retry: fn.route.retry, mapperOverride: fn.route.mapperOverride, absoluteURL: hasAbsoluteURL)
+        let serviceInit = buildServiceInit(successType: successType, failureType: failureType, path: path, pathTemplate: pathTemplate, method: fn.route.method, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, timeout: fn.route.timeout, retry: fn.route.retry, mapperOverride: fn.route.mapperOverride, absoluteURL: hasAbsoluteURL)
 
         let mockName = "on\(fn.name.capitalizingFirst)"
         let mockCallArgs = fn.params.map(\.internalName).joined(separator: ", ")
@@ -523,7 +524,7 @@ public struct APIMacro: PeerMacro {
         return functionBody(name: fn.name, paramsStr: paramsStr, serviceInit: serviceInit, callExpr: "return try await endpoint.data()", throwsStr: throwsStr, returnStr: returnStr, mockName: mockName, mockCallArgs: mockCallArgs, isVoid: isVoid)
     }
 
-    private static func generateUploadFunction(_ fn: FunctionInfo, successType: String, failureType: String, paramsStr: String, throwsStr: String, path: String, bodyStr: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String) -> String {
+    private static func generateUploadFunction(_ fn: FunctionInfo, successType: String, failureType: String, paramsStr: String, throwsStr: String, path: String, pathTemplate: String, bodyStr: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String) -> String {
         let returnStr = " -> \(successType)"
 
         let callExpr: String = if fn.params.contains(where: { $0.internalName == "url" && $0.type == "URL" }) {
@@ -532,7 +533,7 @@ public struct APIMacro: PeerMacro {
             "return try await endpoint.upload()"
         }
 
-        let serviceInit = buildServiceInit(successType: successType, failureType: failureType, path: path, method: fn.route.method, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, timeout: fn.route.timeout, retry: fn.route.retry, mapperOverride: fn.route.mapperOverride)
+        let serviceInit = buildServiceInit(successType: successType, failureType: failureType, path: path, pathTemplate: pathTemplate, method: fn.route.method, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, timeout: fn.route.timeout, retry: fn.route.retry, mapperOverride: fn.route.mapperOverride)
 
         // Protocol-conforming overload (no progress)
         let callArgs = fn.params.map { p in
@@ -570,13 +571,13 @@ public struct APIMacro: PeerMacro {
         """
     }
 
-    private static func generateDownloadFunction(_ fn: FunctionInfo, failureType: String, paramsStr: String, throwsStr: String, path: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String) -> String {
+    private static func generateDownloadFunction(_ fn: FunctionInfo, failureType: String, paramsStr: String, throwsStr: String, path: String, pathTemplate: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String) -> String {
         let hasAbsoluteURL = fn.params.contains { $0.role == .absoluteURL }
         let callExpr = fn.params.contains(where: { $0.internalName == "data" && $0.externalName == "resumeFrom" })
             ? "return try await endpoint.download(resumeFrom: data)"
             : "return try await endpoint.download()"
 
-        let serviceInit = buildServiceInit(successType: "URL", failureType: failureType, path: path, method: fn.route.method, bodyStr: "", extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, timeout: fn.route.timeout, retry: fn.route.retry, mapperOverride: fn.route.mapperOverride, absoluteURL: hasAbsoluteURL)
+        let serviceInit = buildServiceInit(successType: "URL", failureType: failureType, path: path, pathTemplate: pathTemplate, method: fn.route.method, bodyStr: "", extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, timeout: fn.route.timeout, retry: fn.route.retry, mapperOverride: fn.route.mapperOverride, absoluteURL: hasAbsoluteURL)
 
         // Protocol-conforming overload (no progress)
         let callArgs = fn.params.map { p in
@@ -603,8 +604,8 @@ public struct APIMacro: PeerMacro {
         """
     }
 
-    private static func generateStreamFunction(_ fn: FunctionInfo, successType: String, failureType: String, paramsStr: String, path: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String) -> String {
-        let socketInit = buildSocketInit(messageType: successType, failureType: failureType, path: path, method: fn.route.method, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, timeout: fn.route.timeout, retry: fn.route.retry, mapperOverride: fn.route.mapperOverride)
+    private static func generateStreamFunction(_ fn: FunctionInfo, successType: String, failureType: String, paramsStr: String, path: String, pathTemplate: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String) -> String {
+        let socketInit = buildSocketInit(messageType: successType, failureType: failureType, path: path, pathTemplate: pathTemplate, method: fn.route.method, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, timeout: fn.route.timeout, retry: fn.route.retry, mapperOverride: fn.route.mapperOverride)
         let throwsStr = "throws(APIError<\(failureType)>)"
 
         return """
@@ -615,7 +616,7 @@ public struct APIMacro: PeerMacro {
         """
     }
 
-    private static func generateBytesFunction(_ fn: FunctionInfo, successType: String, failureType: String, paramsStr: String, throwsStr: String, path: String, bodyStr: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String) -> String {
+    private static func generateBytesFunction(_ fn: FunctionInfo, successType: String, failureType: String, paramsStr: String, throwsStr: String, path: String, pathTemplate: String, bodyStr: String, extraHeadersStr: String, queryStr: String, authPolicyStr: String) -> String {
         let hasAbsoluteURL = fn.params.contains { $0.role == .absoluteURL }
 
         // Extract element type from ByteStream<T> → T
@@ -626,7 +627,7 @@ public struct APIMacro: PeerMacro {
             elementType = successType
         }
 
-        let serviceInit = buildServiceInit(successType: elementType, failureType: failureType, path: path, method: fn.route.method, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, timeout: fn.route.timeout, retry: fn.route.retry, mapperOverride: fn.route.mapperOverride, absoluteURL: hasAbsoluteURL)
+        let serviceInit = buildServiceInit(successType: elementType, failureType: failureType, path: path, pathTemplate: pathTemplate, method: fn.route.method, bodyStr: bodyStr, extraHeadersStr: extraHeadersStr, queryStr: queryStr, authPolicyStr: authPolicyStr, timeout: fn.route.timeout, retry: fn.route.retry, mapperOverride: fn.route.mapperOverride, absoluteURL: hasAbsoluteURL)
 
         return """
             func \(fn.name)(\(paramsStr)) async \(throwsStr) -> ByteStream<\(elementType)> {
@@ -642,6 +643,7 @@ public struct APIMacro: PeerMacro {
         successType: String,
         failureType: String,
         path: String,
+        pathTemplate: String,
         method: String,
         bodyStr: String,
         extraHeadersStr: String,
@@ -712,6 +714,7 @@ public struct APIMacro: PeerMacro {
                             method: .\(method),
                             host: url.absoluteString,
                             path: "",
+                            pathTemplate: "",
                             query: [],
                             headers: \(headersMerge),
                             body: \(bodyExpr)
@@ -753,6 +756,7 @@ public struct APIMacro: PeerMacro {
                         method: .\(method),
                         host: _config.host,
                         path: _config.base + \(path),
+                        pathTemplate: _config.base + \(pathTemplate),
                         query: \(queryItemsExpr),
                         headers: \(headersMerge),
                         body: \(bodyExpr)
@@ -767,6 +771,7 @@ public struct APIMacro: PeerMacro {
         messageType: String,
         failureType: String,
         path: String,
+        pathTemplate: String,
         method: String,
         extraHeadersStr: String,
         queryStr: String,
@@ -828,6 +833,7 @@ public struct APIMacro: PeerMacro {
                         method: .\(method),
                         host: _config.host,
                         path: _config.base + \(path),
+                        pathTemplate: _config.base + \(pathTemplate),
                         query: \(queryItemsExpr),
                         headers: \(headersMerge)
                     )

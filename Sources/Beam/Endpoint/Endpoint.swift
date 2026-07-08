@@ -323,9 +323,8 @@ extension Endpoint {
             "ErrorDetail": description
         ]
 
-        let sanitizedPath = api.path.replacing(/\/\d+/, with: "/{id}")
         let reportError = NSError(
-            domain: "\(api.method) \(sanitizedPath) — \(serviceError.name)",
+            domain: "\(api.method) \(api.pathTemplate) — \(serviceError.name)",
             code: serviceError.id,
             userInfo: info.merging([NSLocalizedDescriptionKey: description]) { $1 }
         )

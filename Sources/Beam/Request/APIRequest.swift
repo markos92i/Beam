@@ -11,6 +11,7 @@ public struct APIRequest: Sendable {
     public var method: HTTPMethod
     public var host: String
     public var path: String
+    public var pathTemplate: String
     public var query: [URLQueryItem] = []
     public var headers: [String: String] = [:]
     public var accept: ContentType? = nil
@@ -20,6 +21,7 @@ public struct APIRequest: Sendable {
         method: HTTPMethod,
         host: String,
         path: String,
+        pathTemplate: String = "",
         query: [URLQueryItem] = [],
         headers: [String: String] = [:],
         accept: ContentType? = nil,
@@ -28,6 +30,7 @@ public struct APIRequest: Sendable {
         self.method = method
         self.host = host
         self.path = path
+        self.pathTemplate = pathTemplate
         self.query = query
         self.headers = headers
         self.accept = accept
