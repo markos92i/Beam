@@ -13,6 +13,8 @@ actor MockSession: SessionProtocol {
 
     // MARK: - Types
 
+    let sessionDelegate = SessionDelegate()
+
     typealias DataHandler = @Sendable (URLRequest) async throws -> (Data, URLResponse)
     typealias UploadResumeHandler = @Sendable (Data) async throws -> (Data, URLResponse)
     typealias DownloadResumeHandler = @Sendable (Data) async throws -> (URL, URLResponse)

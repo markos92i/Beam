@@ -21,7 +21,7 @@ public actor Client: Identifiable {
 
     public init(
         id: String = String(UUID().uuidString.prefix(4)),
-        session: any SessionProtocol = URLSession.shared
+        session: any SessionProtocol = Session()
     ) {
         self.session = session
         self.log = BeamLogger()
@@ -134,10 +134,7 @@ public actor Client: Identifiable {
         let (url, httpResponse) = try await execute(for: request) { _ in
             let task = session.downloadTask(with: request)
             onTaskCreated(task: task)
-            return try await withCheckedThrowingContinuation { continuation in
-                task.delegate = DownloadTransferDelegate(continuation: continuation)
-                task.resume()
-            }
+            return try await session.sessionDelegate.awaitDownload(for: task)
         }
         return (url: url, response: httpResponse)
     }
@@ -147,10 +144,7 @@ public actor Client: Identifiable {
         let (url, httpResponse) = try await execute(for: request) { _ in
             let task = session.downloadTask(withResumeData: data)
             onTaskCreated(task: task)
-            return try await withCheckedThrowingContinuation { continuation in
-                task.delegate = DownloadTransferDelegate(continuation: continuation)
-                task.resume()
-            }
+            return try await session.sessionDelegate.awaitDownload(for: task)
         }
         return (url: url, response: httpResponse)
     }
@@ -160,10 +154,7 @@ public actor Client: Identifiable {
         return try await execute(for: request) { _ in
             let task = session.uploadTask(with: request, from: data)
             onTaskCreated(task: task)
-            return try await withCheckedThrowingContinuation { continuation in
-                task.delegate = UploadTransferDelegate(continuation: continuation)
-                task.resume()
-            }
+            return try await session.sessionDelegate.awaitUpload(for: task)
         }
     }
 
@@ -172,10 +163,7 @@ public actor Client: Identifiable {
         return try await execute(for: request) { _ in
             let task = session.uploadTask(with: request, fromFile: url)
             onTaskCreated(task: task)
-            return try await withCheckedThrowingContinuation { continuation in
-                task.delegate = UploadTransferDelegate(continuation: continuation)
-                task.resume()
-            }
+            return try await session.sessionDelegate.awaitUpload(for: task)
         }
     }
 

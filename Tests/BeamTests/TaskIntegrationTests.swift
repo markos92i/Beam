@@ -3,7 +3,7 @@
 //  Beam
 //
 //  Integration tests for DownloadTask and UploadTask using the
-//  task-based path (downloadTask/uploadTask + delegate).
+//  task-based path (foreground, inline result via task delegate).
 //
 //  ⚠️ Requires internet. Run manually:
 //  swift test --filter "Task Integration"

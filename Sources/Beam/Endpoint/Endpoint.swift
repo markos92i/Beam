@@ -25,7 +25,7 @@ public struct Endpoint<Success: Sendable, Failure: Sendable>: Sendable {
     public var progress: Progress { client.progress }
 
     public init(
-        session: any SessionProtocol = URLSession.shared,
+        session: any SessionProtocol = Session(),
         auth: (any AuthProtocol)? = nil,
         crash: (any CrashProtocol)? = nil,
         mapper: any MapperProtocol = Mapper(),

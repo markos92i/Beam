@@ -134,7 +134,7 @@ public struct _APIConfiguration: Sendable {
         host: String,
         base: String,
         headers: [String: String] = [:],
-        session: any SessionProtocol = URLSession.shared,
+        session: any SessionProtocol = Session(),
         auth: (any AuthProtocol)? = nil,
         crash: (any CrashProtocol)? = nil,
         mapper: any MapperProtocol = Mapper(),

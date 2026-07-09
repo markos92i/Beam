@@ -63,3 +63,60 @@ struct ResumeDataIntegrationTests {
         try? FileManager.default.removeItem(at: url)
     }
 }
+
+// MARK: - Background Session
+
+@Suite("ResumeData Background Integration", .tags(.network))
+struct ResumeDataBackgroundIntegrationTests {
+
+    /// Fichero ~180MB — no terminará antes de cancelar.
+    private let fileURL = URL(string: "https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_480p_h264.mov")!
+
+    @Test
+    func downloadCancelProducesResumeDataWithBackgroundSession() async throws {
+        let session = Session(
+            identifier: "com.beam.test.resume.\(UUID().uuidString)",
+            isDiscretionary: false,
+            sessionSendsLaunchEvents: false
+        )
+        let client = Client(session: session)
+
+        // 1. Lanzar descarga con task-based path (background-compatible)
+        let request = URLRequest(url: fileURL)
+        let downloadTask = Task {
+            try await client.downloadTask(for: request)
+        }
+
+        // 2. Esperar a que la descarga empiece realmente
+        try await Task.sleep(for: .seconds(2))
+
+        // 3. Cancelar via cancel() del Client (produce resume data)
+        let resumeData = await client.cancel()
+
+        // 4. El task debería terminar con error
+        do {
+            _ = try await downloadTask.value
+            Issue.record("Expected error after cancel")
+        } catch {
+            // Esperado — la task fue cancelada
+        }
+
+        // 5. Verificar que tenemos resume data
+        #expect(resumeData != nil, "cancel() debería producir resume data")
+        #expect(resumeData?.isEmpty == false, "El resume data no debería estar vacío")
+
+        guard let validResumeData = resumeData else { return }
+        print("✅ Resume data obtenido (background): \(validResumeData.count) bytes")
+
+        // 6. Reanudar descarga con el resume data via task-based path
+        let client2 = Client(session: session)
+        let (url, response) = try await client2.downloadTask(for: request, resumeFrom: validResumeData)
+
+        #expect(response.statusCode == 200 || response.statusCode == 206)
+        let fileSize = try Data(contentsOf: url).count
+        #expect(fileSize > 0, "El fichero reanudado no debería estar vacío")
+        print("✅ Descarga reanudada (background): \(fileSize) bytes")
+
+        try? FileManager.default.removeItem(at: url)
+    }
+}

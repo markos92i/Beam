@@ -8,6 +8,8 @@
 import Foundation
 
 public protocol SessionProtocol: Sendable {
+    var sessionDelegate: SessionDelegate { get }
+
     func bytes(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws -> (URLSession.AsyncBytes, URLResponse)
     func data(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse)
     func download(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws -> (URL, URLResponse)
@@ -22,23 +24,4 @@ public protocol SessionProtocol: Sendable {
     func uploadTask(with request: URLRequest, from data: Data) -> URLSessionUploadTask
     func uploadTask(with request: URLRequest, fromFile url: URL) -> URLSessionUploadTask
     func webSocketTask(with request: URLRequest) -> URLSessionWebSocketTask
-}
-
-extension URLSession: SessionProtocol {}
-
-extension URLSession {
-    /// Resumes an upload from stored resume data using delegate-based callbacks.
-    ///
-    /// Uses `uploadTask(withResumeData:)` (no completion handler) so it is
-    /// compatible with background sessions. The provided `delegate` is notified
-    /// of task creation for progress tracking; response data and completion are
-    /// handled internally via `UploadTransferDelegate`.
-    public func upload(resumeFrom data: Data, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse) {
-        let task = self.uploadTask(withResumeData: data)
-        delegate?.urlSession?(self, didCreateTask: task)
-        return try await withCheckedThrowingContinuation { continuation in
-            task.delegate = UploadTransferDelegate(continuation: continuation)
-            task.resume()
-        }
-    }
 }

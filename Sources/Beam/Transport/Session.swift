@@ -25,7 +25,7 @@ import Foundation
 /// ```
 public final class Session: SessionProtocol, @unchecked Sendable {
     private let urlSession: URLSession
-    private let sessionDelegate: SessionDelegate
+    public let sessionDelegate: SessionDelegate
 
     /// The session identifier, if using a background configuration.
     public var identifier: String? { urlSession.configuration.identifier }
@@ -89,10 +89,12 @@ public final class Session: SessionProtocol, @unchecked Sendable {
     }
 
     public func upload(resumeFrom data: Data, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse) {
-        try await urlSession.upload(resumeFrom: data, delegate: delegate)
+        let task = urlSession.uploadTask(withResumeData: data)
+        delegate?.urlSession?(urlSession, didCreateTask: task)
+        return try await sessionDelegate.awaitUpload(for: task)
     }
 
-    // MARK: - SessionProtocol (task-based, background-compatible)
+    // MARK: - SessionProtocol (task-based)
 
     public func downloadTask(with request: URLRequest) -> URLSessionDownloadTask {
         urlSession.downloadTask(with: request)

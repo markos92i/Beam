@@ -310,7 +310,7 @@ struct StreamEndpointErrorTests {
         do {
             _ = try await endpoint.stream()
             Issue.record("Expected error")
-        } catch let error as APIError<Void> {
+        } catch {
             #expect(error == .noConnection)
         }
     }
@@ -331,7 +331,7 @@ struct StreamEndpointErrorTests {
         do {
             _ = try await endpoint.stream()
             Issue.record("Expected error")
-        } catch let error as APIError<Void> {
+        } catch {
             #expect(error == .timedOut)
         }
     }
@@ -355,7 +355,7 @@ struct StreamEndpointErrorTests {
         do {
             _ = try await endpoint.stream()
             Issue.record("Expected error")
-        } catch let error as APIError<Void> {
+        } catch {
             #expect(error == .timedOut)
         }
 

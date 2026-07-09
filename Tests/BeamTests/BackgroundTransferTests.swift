@@ -3,9 +3,8 @@
 //  Beam
 //
 //  Integration tests verifying that the task-based (background-compatible) path
-//  works correctly with a real URLSession using background configuration.
-//  Ensures DownloadTransferDelegate and UploadTransferDelegate do not crash
-//  when bridging callbacks to async/await.
+//  works correctly with a background Session. The Client transparently uses
+//  SessionDelegate continuations instead of per-task delegates.
 //
 //  ⚠️ Requires internet. Run manually:
 //  swift test --filter "Background Transfer"
@@ -32,13 +31,13 @@ struct BackgroundTransferTests {
 
     // MARK: - Helpers
 
-    /// Creates a URLSession with background configuration for testing.
-    private func makeBackgroundSession() -> URLSession {
-        let id = "com.beam.test.background.\(UUID().uuidString)"
-        let config = URLSessionConfiguration.background(withIdentifier: id)
-        config.isDiscretionary = false
-        config.sessionSendsLaunchEvents = false
-        return URLSession(configuration: config)
+    /// Creates a Beam `Session` with background configuration for testing.
+    private func makeBackgroundSession() -> Session {
+        Session(
+            identifier: "com.beam.test.background.\(UUID().uuidString)",
+            isDiscretionary: false,
+            sessionSendsLaunchEvents: false
+        )
     }
 
     // MARK: - Download
@@ -46,7 +45,6 @@ struct BackgroundTransferTests {
     @Test("Download completes via task-based path with background session")
     func backgroundDownloadDirect() async throws {
         let session = makeBackgroundSession()
-        defer { session.invalidateAndCancel() }
 
         let client = Client(session: session)
         let request = URLRequest(url: URL(string: "https://postman-echo.com/get")!)
@@ -62,7 +60,6 @@ struct BackgroundTransferTests {
     @Test("Download via Endpoint task-based path with background session")
     func backgroundDownloadEndpoint() async throws {
         let session = makeBackgroundSession()
-        defer { session.invalidateAndCancel() }
 
         let endpoint = Endpoint<URL, Void>(
             session: session,
@@ -79,19 +76,22 @@ struct BackgroundTransferTests {
 
     // MARK: - Upload
 
-    @Test("Upload completes via task-based path with background session")
+    @Test("Upload from file via task-based path with background session")
     func backgroundUploadDirect() async throws {
         let session = makeBackgroundSession()
-        defer { session.invalidateAndCancel() }
+
+        let tempFile = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).json")
+        let payload = #"{"content":"beam-background-test"}"#.data(using: .utf8)!
+        try payload.write(to: tempFile)
+        defer { try? FileManager.default.removeItem(at: tempFile) }
 
         let client = Client(session: session)
-        let payload = #"{"content":"beam-background-test"}"#.data(using: .utf8)!
 
         var request = URLRequest(url: URL(string: "https://postman-echo.com/post")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let (responseData, response) = try await client.uploadTask(for: request, from: payload)
+        let (responseData, response) = try await client.uploadTask(for: request, fromFile: tempFile)
 
         #expect(response.statusCode == 200)
         #expect(!responseData.isEmpty, "Upload response should not be empty")
@@ -100,7 +100,6 @@ struct BackgroundTransferTests {
     @Test("Upload from file via task-based path with background session")
     func backgroundUploadFile() async throws {
         let session = makeBackgroundSession()
-        defer { session.invalidateAndCancel() }
 
         // Write temp file to upload
         let tempFile = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).json")
@@ -125,7 +124,6 @@ struct BackgroundTransferTests {
     @Test("DownloadTask works end-to-end with background session")
     func downloadWithBackgroundSession() async throws {
         let session = makeBackgroundSession()
-        defer { session.invalidateAndCancel() }
 
         let endpoint = Endpoint<URL, Void>(
             session: session,
@@ -148,10 +146,13 @@ struct BackgroundTransferTests {
     @Test("UploadTask works end-to-end with background session")
     func backgroundUploadTask() async throws {
         let session = makeBackgroundSession()
-        defer { session.invalidateAndCancel() }
 
         let body = BackgroundUploadBody(content: "background-test")
         let bodyData = try JSONEncoder().encode(body)
+
+        let tempFile = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).json")
+        try bodyData.write(to: tempFile)
+        defer { try? FileManager.default.removeItem(at: tempFile) }
 
         let endpoint = Endpoint<BackgroundUploadResponse, Void>(
             session: session,
@@ -160,15 +161,15 @@ struct BackgroundTransferTests {
                 method: .post,
                 host: "https://postman-echo.com",
                 path: "/post",
-                body: .data(bodyData)
+                body: .data(bodyData, contentType: .json())
             )
         )
 
         let task = UploadTask(endpoint: endpoint)
         #expect(!task.id.isEmpty)
 
-        let result = try await task.start(data: bodyData)
-        #expect(result.json?.content == "handle-background-test")
+        let result = try await task.start(url: tempFile)
+        #expect(result.json?.content == "background-test")
     }
 
     // MARK: - Cancellation
@@ -176,7 +177,6 @@ struct BackgroundTransferTests {
     @Test("Download cancel produces resume data with background session")
     func downloadCancelWithBackgroundSession() async throws {
         let session = makeBackgroundSession()
-        defer { session.invalidateAndCancel() }
 
         let client = Client(session: session)
 
