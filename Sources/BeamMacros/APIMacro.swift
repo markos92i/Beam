@@ -150,7 +150,9 @@ public struct APIMacro: PeerMacro {
 
         // Generate client struct
         var output = """
-        struct \(clientName): \(protocolName), Sendable {
+        // @unchecked Sendable: mock closures are nil in production and thread-safe by design.
+        // Assigning mock closures concurrently with active calls is a caller error.
+        struct \(clientName): \(protocolName), @unchecked Sendable {
             static let _apiConfiguration = _APIConfiguration(
                 host: \(host),
                 base: \(baseStr),
@@ -900,7 +902,7 @@ public struct APIMacro: PeerMacro {
             let closureParamTypes = fn.params.map(\.type).joined(separator: ", ")
             let closureType = "((\(closureParamTypes)) async \(throwsClause) -> \(successType))?"
 
-            output += "    nonisolated(unsafe) var \(propertyName): \(closureType)\n"
+            output += "    var \(propertyName): \(closureType)\n"
         }
 
         return output
