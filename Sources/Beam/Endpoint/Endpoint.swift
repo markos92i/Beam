@@ -302,11 +302,11 @@ extension Endpoint {
 extension Endpoint {
     func mapError(_ error: Error, attempt: Int) async -> APIError<Failure> {
         let serviceError = APIError<Failure>(error: error) { try? mapper.decode(data: $0) }
+        let description = (error as? LoggableError)?.logDescription ?? serviceError.detail
+
+        log.log(.error(id: id, icon: serviceError.icon, name: serviceError.name, detail: description, attempt: attempt))
 
         guard !serviceError.isSilent else { return serviceError }
-
-        let description = (error as? LoggableError)?.logDescription ?? serviceError.detail
-        log.log(.error(id: id, icon: serviceError.icon, name: serviceError.name, detail: description, attempt: attempt))
         reportError(serviceError, error: error, attempt: attempt)
 
         return serviceError
