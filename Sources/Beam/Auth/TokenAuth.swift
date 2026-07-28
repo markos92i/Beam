@@ -119,6 +119,7 @@ public actor TokenAuth: AuthProtocol {
 
     public func invalidate() async {
         state = .invalid
+        resumeInit()
     }
 
     // MARK: - Lifecycle
