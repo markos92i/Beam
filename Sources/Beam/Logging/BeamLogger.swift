@@ -50,6 +50,9 @@ public struct BeamLogger: Sendable {
     /// When true, prints full request and response bodies to console.
     public nonisolated(unsafe) static var verbose = true
 
+    /// Maximum body size (in characters) to print. Default 2000.
+    public nonisolated(unsafe) static var maxBodySize = 2000
+
     // MARK: - Instance Configuration
 
     /// Instance-level minimum. Falls back to `BeamLogger.level` when nil.
@@ -81,17 +84,13 @@ public struct BeamLogger: Sendable {
 
     private let signposter = OSSignposter(subsystem: BeamLogger.subsystem, category: "http")
 
-    // MARK: - Constants
-
-    private let maxBodySize = 300
-
     // MARK: - Unified Log Entry Point
 
     /// Logs a structured event. Guard, format, and emit happen in one place.
     func log(_ event: LogEvent) {
         guard Self.enabled, effectiveLevel <= event.meta.level else { return }
 
-        let config = RenderConfig(verbose: Self.verbose, maxBodySize: maxBodySize)
+        let config = RenderConfig(verbose: Self.verbose, maxBodySize: Self.maxBodySize)
         let output = event.rendered(in: config)
         emit(output, to: logger(for: event.meta.category), level: event.meta.level.osLogType)
     }

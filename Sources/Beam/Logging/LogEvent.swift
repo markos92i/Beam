@@ -32,7 +32,7 @@ enum LogEvent: Sendable {
 extension LogEvent {
     enum Body: Sendable {
         case data(Data)
-        case file(URL)
+        case file(String)
         case none
 
         /// Wraps optional raw data into a `Body`.
@@ -167,8 +167,8 @@ extension LogEvent {
                 }
             }
             return "\(data.count.byteFormatted)"
-        case .file(let url):
-            return "􀈷 \(url.lastPathComponent)"
+        case .file(let filename):
+            return "􀈷 \(filename)"
         default:
             return "􀓔"
         }

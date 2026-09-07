@@ -22,6 +22,6 @@ struct RenderConfig: Sendable {
 
     /// Default config built from current global logger settings.
     static var current: RenderConfig {
-        RenderConfig(verbose: BeamLogger.verbose, maxBodySize: 300)
+        RenderConfig(verbose: BeamLogger.verbose, maxBodySize: BeamLogger.maxBodySize)
     }
 }

@@ -9,15 +9,23 @@ import Foundation
 import UniformTypeIdentifiers
 
 public struct FileUtils {
+    /// Derives a filename with proper extension from server-suggested name and content type.
+    public static func resolveFilename(suggestedFilename: String?, contentType: String) -> String {
+        if let suggested = suggestedFilename, !suggested.isEmpty {
+            let suggestedURL = URL(fileURLWithPath: suggested)
+            if suggestedURL.pathExtension.isEmpty {
+                let ext = UTType(mimeType: contentType)?.preferredFilenameExtension
+                    ?? String(contentType.split(separator: "/").last ?? "bin")
+                return "\(suggested).\(ext)"
+            }
+            return suggested
+        }
+        let ext = UTType(mimeType: contentType)?.preferredFilenameExtension
+            ?? String(contentType.split(separator: "/").last ?? "bin")
+        return "\(UUID().uuidString).\(ext)"
+    }
+
     /// Copies a file to the specified directory with an appropriate filename.
-    ///
-    /// - Parameters:
-    ///   - url: Source file URL (typically the temporary URL from URLSession download).
-    ///   - directory: Destination directory (e.g. `.cachesDirectory`).
-    ///   - suggestedFilename: Filename suggested by the server (from `HTTPURLResponse.suggestedFilename`).
-    ///     Falls back to a UUID-based name if nil or empty.
-    ///   - contentType: MIME type used to derive file extension when `suggestedFilename` has none.
-    /// - Returns: The destination URL where the file was copied.
     public static func copy(
         url: URL,
         to directory: FileManager.SearchPathDirectory,
@@ -25,15 +33,7 @@ public struct FileUtils {
         contentType: String
     ) throws(FileError) -> URL {
         let dir = FileManager.default.urls(for: directory, in: .userDomainMask).first
-
-        let filename: String
-        if let suggested = suggestedFilename, !suggested.isEmpty {
-            filename = suggested
-        } else {
-            let ext = UTType(mimeType: contentType)?.preferredFilenameExtension
-                ?? String(contentType.split(separator: "/").last ?? "")
-            filename = "\(UUID().uuidString).\(ext)"
-        }
+        let filename = resolveFilename(suggestedFilename: suggestedFilename, contentType: contentType)
 
         guard let target = dir?.appendingPathComponent(filename) else {
             throw .invalidTargetURL

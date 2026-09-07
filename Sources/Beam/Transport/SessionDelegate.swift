@@ -159,10 +159,18 @@ extension SessionDelegate: URLSessionTaskDelegate {
 
 extension SessionDelegate: URLSessionDownloadDelegate {
     public func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        let httpResponse = downloadTask.response as? HTTPURLResponse
+        let suggestedFilename = httpResponse?.suggestedFilename
+        let contentType = httpResponse?.mimeType ?? ContentType.data.value
+
         // 1. Download continuation waiting — resume it.
         if let continuation = downloadContinuations.removeValue(forKey: downloadTask.taskIdentifier) {
-            let safeCopy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            let filename = FileUtils.resolveFilename(suggestedFilename: suggestedFilename, contentType: contentType)
+            let safeCopy = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
             do {
+                if FileManager.default.fileExists(atPath: safeCopy.path) {
+                    try FileManager.default.removeItem(at: safeCopy)
+                }
                 try FileManager.default.copyItem(at: location, to: safeCopy)
                 continuation.resume(returning: (safeCopy, downloadTask.response!))
             } catch {
@@ -177,16 +185,18 @@ extension SessionDelegate: URLSessionDownloadDelegate {
             return
         }
 
-        // 3. No waiter — copy file and accumulate result.
-        let safeCopy = FileManager.default.temporaryDirectory
-            .appendingPathComponent("beam_bg_\(UUID().uuidString)")
-            .appendingPathExtension(location.pathExtension)
+        // 3. No waiter (background transfer) — copy file and accumulate result.
+        let filename = FileUtils.resolveFilename(suggestedFilename: suggestedFilename, contentType: contentType)
+        let safeCopy = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
 
         let originalURL = downloadTask.originalRequest?.url
         let taskDescription = downloadTask.taskDescription
-        let statusCode = (downloadTask.response as? HTTPURLResponse)?.statusCode
+        let statusCode = httpResponse?.statusCode
 
         do {
+            if FileManager.default.fileExists(atPath: safeCopy.path) {
+                try FileManager.default.removeItem(at: safeCopy)
+            }
             try FileManager.default.copyItem(at: location, to: safeCopy)
             addResult(BackgroundTransferResult(
                 originalURL: originalURL,

@@ -51,7 +51,7 @@ public actor Client: Identifiable {
             }
 
             let body: LogEvent.Body = if let data = value as? Data { .data(data) }
-                                      else if let url = value as? URL { .file(url) }
+                                      else if value is URL { .file(FileUtils.resolveFilename(suggestedFilename: httpResponse.suggestedFilename, contentType: httpResponse.mimeType ?? ContentType.data.value)) }
                                       else { .none }
             log.log(.response(id: id, status: httpResponse.statusCode, headers: httpResponse.allHeaderFields as? [String: String] ?? [:], body: body, start: start))
             log.endRequest(signpostState, status: httpResponse.statusCode)
