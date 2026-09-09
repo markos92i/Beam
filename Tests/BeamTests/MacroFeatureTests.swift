@@ -184,3 +184,50 @@ struct MacroFeatureTests {
         }
     }
 }
+
+
+// MARK: - Path Template Tests
+
+@API(
+    host: "https://api.example.com",
+    base: "",
+    headers: [:]
+)
+protocol PathTemplateTestAPI {
+    // Using placeholder syntax
+    @Get("/users/{id}")
+    func getUser(id: Int) async throws(APIError<Void>) -> ResponseMock
+
+    // Multiple placeholders
+    @Get("/users/{userId}/posts/{postId}")
+    func getUserPost(userId: Int, postId: Int) async throws(APIError<Void>) -> ResponseMock
+}
+
+extension MacroFeatureTests {
+
+    @Test
+    func pathTemplatePlaceholdersArePreserved() async throws {
+        let session = MockSession { request in
+            // Verify the actual URL has the interpolated value
+            #expect(request.url?.absoluteString == "https://api.example.com/users/42")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (try! JSONEncoder().encode(ResponseMock(id: "1", value: 1)), response)
+        }
+
+        let api = PathTemplateTestAPIClient(session: session)
+        _ = try await api.getUser(id: 42)
+    }
+
+    @Test
+    func multiplePathPlaceholders() async throws {
+        let session = MockSession { request in
+            // Verify the actual URL has the interpolated values
+            #expect(request.url?.absoluteString == "https://api.example.com/users/123/posts/456")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (try! JSONEncoder().encode(ResponseMock(id: "1", value: 1)), response)
+        }
+
+        let api = PathTemplateTestAPIClient(session: session)
+        _ = try await api.getUserPost(userId: 123, postId: 456)
+    }
+}

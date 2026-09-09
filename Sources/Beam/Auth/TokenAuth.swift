@@ -172,18 +172,15 @@ public actor TokenAuth: AuthProtocol {
             do {
                 let newToken = try await onRefresh()
                 self.state = .ready(newToken)
-                self.log.log(.auth(type: "TokenAuth", name: name, detail: "success 􀆅"))
+                self.log.log(.auth(type: "TokenAuth", name: name, detail: "refreshed 􀆅"))
                 return newToken
             } catch AuthError.invalidCredentials {
-                self.log.log(.auth(type: "TokenAuth", name: name, detail: "failure 􀆄 invalidCredentials"))
                 self.clear()
                 await onSessionLost?()
                 throw AuthError.invalidCredentials
             } catch is CancellationError {
-                self.log.log(.auth(type: "TokenAuth", name: name, detail: "failure 􀆄 cancelled"))
                 throw AuthError.cancelled
             } catch {
-                self.log.log(.auth(type: "TokenAuth", name: name, detail: "failure 􀆄 failedToRefreshToken"))
                 self.state = .invalid
                 throw AuthError.failedToRefreshToken
             }

@@ -400,7 +400,7 @@ public struct APIMacro: PeerMacro {
 
         let throwsStr = "throws(APIError<\(failureType)>)"
         let path = transformPath(fn.route.path, params: fn.params)
-        let pathTemplate = fn.route.path
+        let pathTemplate = templatePath(fn.route.path)
 
         // Body
         let bodyParam = fn.params.first(where: { $0.role == .body })
@@ -867,6 +867,70 @@ public struct APIMacro: PeerMacro {
             }
         }
         return "\"\(result)\""
+    }
+
+    /// Converts a path literal to a template by replacing Swift interpolations with placeholders.
+    ///
+    /// - `{param}` placeholders are preserved as-is
+    /// - `\(expression)` interpolations are replaced with `{param}` (using the expression name)
+    ///
+    /// Examples:
+    /// - `"/users/{id}"` → `"/users/{id}"`
+    /// - `"/users/\(userId)"` → `"/users/{userId}"`
+    /// - `"/users/\(Defs.shared.userID)"` → `"/users/{userID}"`
+    private static func templatePath(_ pathLiteral: String) -> String {
+        var path = pathLiteral
+        if path.hasPrefix("\"") && path.hasSuffix("\"") {
+            path = String(path.dropFirst().dropLast())
+        }
+
+        var result = ""
+        var i = path.startIndex
+
+        while i < path.endIndex {
+            // Check for Swift interpolation: \(...)
+            if path[i] == "\\" && path.index(after: i) < path.endIndex && path[path.index(after: i)] == "(" {
+                let openParen = path.index(after: i)
+                var depth = 1
+                var j = path.index(after: openParen)
+
+                // Find matching closing parenthesis
+                while j < path.endIndex && depth > 0 {
+                    if path[j] == "(" { depth += 1 }
+                    else if path[j] == ")" { depth -= 1 }
+                    if depth > 0 { j = path.index(after: j) }
+                }
+
+                if depth == 0 {
+                    // Extract the expression inside \(...)
+                    let expr = String(path[path.index(after: openParen)..<j])
+                    // Extract meaningful name from expression (last component after `.`)
+                    let name = extractPlaceholderName(from: expr)
+                    result += "{\(name)}"
+                    i = path.index(after: j)
+                    continue
+                }
+            }
+
+            result.append(path[i])
+            i = path.index(after: i)
+        }
+
+        return "\"\(result)\""
+    }
+
+    /// Extracts a meaningful placeholder name from a Swift expression.
+    ///
+    /// - `userId` → `userId`
+    /// - `Defs.shared.userID` → `userID`
+    /// - `user.id` → `id`
+    private static func extractPlaceholderName(from expression: String) -> String {
+        let trimmed = expression.trimmingCharacters(in: .whitespaces)
+        // Take the last component after the last `.`
+        if let lastDot = trimmed.lastIndex(of: ".") {
+            return String(trimmed[trimmed.index(after: lastDot)...])
+        }
+        return trimmed
     }
 
     // MARK: - Mock Properties
