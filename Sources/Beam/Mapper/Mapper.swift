@@ -31,6 +31,9 @@ public struct Mapper: MapperProtocol {
     }
 
     /// Deserializes raw Data into the inferred generic type.
+    @specialized(where Value == Data)
+    @specialized(where Value == String)
+    @specialized(where Value == [String: Any])
     public func decode<Value>(data: Data) throws(MapperError) -> Value {
         if Value.self is Void.Type, let result = () as? Value {
             return result

@@ -305,15 +305,15 @@ actor Socket<Success: Sendable, Failure: Sendable> {
         }
     }
 
-    private func deserialize(message: URLSessionWebSocketTask.Message, mapper: any MapperProtocol) throws -> Success {
+    private func deserialize(message: URLSessionWebSocketTask.Message, mapper: any MapperProtocol) throws(MapperError) -> Success {
         switch message {
         case .string(let text):
-            guard let data = text.data(using: .utf8) else { throw MapperError.incorrect }
+            guard let data = text.data(using: .utf8) else { throw .incorrect }
             return try mapper.decode(data: data)
         case .data(let data):
             return try mapper.decode(data: data)
         @unknown default:
-            throw MapperError.unsuported
+            throw .unsuported
         }
     }
 }

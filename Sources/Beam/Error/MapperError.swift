@@ -41,6 +41,7 @@ public enum MapperError: Error, LoggableError {
         self = .decoding(decodingError, description: description)
     }
 
+    @inline(__always)
     var logDescription: String {
         switch self {
         case .unsuported:

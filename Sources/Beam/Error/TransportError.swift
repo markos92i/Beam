@@ -16,14 +16,17 @@ public enum TransportError: Error, LoggableError {
     case http(status: HTTPStatus, body: Data?)
     case unknown(Error)
 
+    @inline(__always)
     public var status: HTTPStatus {
         if case .http(let status, _) = self { status } else { .undefined }
     }
 
+    @inline(__always)
     var body: Data? {
         if case .http(_, let body) = self { body } else { nil }
     }
 
+    @inline(__always)
     var logDescription: String {
         switch self {
         case .invalidURL: "The URL is invalid"
@@ -36,6 +39,7 @@ public enum TransportError: Error, LoggableError {
         }
     }
 
+    @inline(__always)
     var isRetryable: Bool {
         switch self {
         case .url(let error):

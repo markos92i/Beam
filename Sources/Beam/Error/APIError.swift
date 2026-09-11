@@ -69,14 +69,17 @@ public enum APIError<Failure: Sendable>: Error, Identifiable {
 
 // MARK: - Properties
 extension APIError {
+    @inline(__always)
     public var status: HTTPStatus? {
         if case .http(let status, _) = self { status } else { nil }
     }
 
+    @inline(__always)
     public var body: Failure? {
         if case .http(_, let body) = self { body } else { nil }
     }
 
+    @inline(__always)
     var isSilent: Bool {
         switch self {
         case .cancelled, .noConnection, .timedOut: true
@@ -85,6 +88,7 @@ extension APIError {
     }
 
     /// Whether this error should trigger WebSocket reconnection.
+    @inline(__always)
     var isReconnectable: Bool {
         switch self {
         case .connectionClosed(let code, _):
@@ -96,6 +100,7 @@ extension APIError {
         }
     }
 
+    @inline(__always)
     public var name: String {
         switch self {
         case .http(let status, _): "http(\(status.rawValue))"
@@ -120,6 +125,7 @@ extension APIError {
         }
     }
 
+    @inline(__always)
     var icon: String {
         switch self {
         case .encode, .decode: "􀃮"
@@ -139,6 +145,7 @@ extension APIError {
         }
     }
 
+    @inline(__always)
     public var detail: String {
         switch self {
         case .http(let status, _): status.name
