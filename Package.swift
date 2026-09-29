@@ -15,7 +15,7 @@ let package = Package(
             targets: ["Beam"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.2"),
+        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "604.0.0"),
     ],
     targets: [
         // Macro implementation (compiler plugin)
