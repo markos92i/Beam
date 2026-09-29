@@ -7,7 +7,7 @@ import CompilerPluginSupport
 let package = Package(
     name: "Beam",
     platforms: [
-       .macOS(.v15), .iOS(.v18),
+        .macOS(.v15), .iOS(.v18),
     ],
     products: [
         .library(
