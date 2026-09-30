@@ -17,41 +17,41 @@ import Testing
 @Suite("ResumeData Integration", .tags(.network))
 struct ResumeDataIntegrationTests {
 
-    /// Fichero ~180MB — no terminará antes de cancelar.
+    /// ~180MB file — the download won't finish before we cancel.
     private let fileURL = URL(string: "https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_480p_h264.mov")!
 
     @Test
     func downloadCancelProducesResumeData() async throws {
         let client = Client()
 
-        // 1. Lanzar descarga en background
+        // 1. Start background download
         let request = URLRequest(url: fileURL)
         let downloadTask = Task {
             try await client.download(for: request)
         }
 
-        // 2. Esperar a que la descarga empiece realmente
+        // 2. Wait for the download to actually start
         try await Task.sleep(for: .seconds(2))
 
-        // 3. Cancelar via cancel() del Client (produce resume data)
+        // 3. Cancel via the Client's cancel() (produces resume data)
         let resumeData = await client.cancel()
 
-        // 4. El task debería terminar con error
+        // 4. The task should finish with an error
         do {
             _ = try await downloadTask.value
             Issue.record("Expected error after cancel")
         } catch {
-            // Esperado — la task fue cancelada
+            // Expected — the task was cancelled
         }
 
-        // 5. Verificar que tenemos resume data
+        // 5. Verify we have resume data
         #expect(resumeData != nil, "cancel() debería producir resume data")
         #expect(resumeData?.isEmpty == false, "El resume data no debería estar vacío")
 
         guard let validResumeData = resumeData else { return }
         print("✅ Resume data obtenido: \(validResumeData.count) bytes")
 
-        // 6. Reanudar descarga con el resume data
+        // 6. Resume the download with the resume data
         let client2 = Client()
         let (url, response) = try await client2.download(for: request, resumeFrom: validResumeData)
 
@@ -69,7 +69,7 @@ struct ResumeDataIntegrationTests {
 @Suite("ResumeData Background Integration", .tags(.network))
 struct ResumeDataBackgroundIntegrationTests {
 
-    /// Fichero ~180MB — no terminará antes de cancelar.
+    /// ~180MB file — the download won't finish before we cancel.
     private let fileURL = URL(string: "https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_480p_h264.mov")!
 
     @Test
@@ -81,34 +81,34 @@ struct ResumeDataBackgroundIntegrationTests {
         )
         let client = Client(session: session)
 
-        // 1. Lanzar descarga con task-based path (background-compatible)
+        // 1. Start download via task-based path (background-compatible)
         let request = URLRequest(url: fileURL)
         let downloadTask = Task {
             try await client.downloadTask(for: request)
         }
 
-        // 2. Esperar a que la descarga empiece realmente
+        // 2. Wait for the download to actually start
         try await Task.sleep(for: .seconds(2))
 
-        // 3. Cancelar via cancel() del Client (produce resume data)
+        // 3. Cancel via the Client's cancel() (produces resume data)
         let resumeData = await client.cancel()
 
-        // 4. El task debería terminar con error
+        // 4. The task should finish with an error
         do {
             _ = try await downloadTask.value
             Issue.record("Expected error after cancel")
         } catch {
-            // Esperado — la task fue cancelada
+            // Expected — the task was cancelled
         }
 
-        // 5. Verificar que tenemos resume data
+        // 5. Verify we have resume data
         #expect(resumeData != nil, "cancel() debería producir resume data")
         #expect(resumeData?.isEmpty == false, "El resume data no debería estar vacío")
 
         guard let validResumeData = resumeData else { return }
         print("✅ Resume data obtenido (background): \(validResumeData.count) bytes")
 
-        // 6. Reanudar descarga con el resume data via task-based path
+        // 6. Resume the download with the resume data via the task-based path
         let client2 = Client(session: session)
         let (url, response) = try await client2.downloadTask(for: request, resumeFrom: validResumeData)
 
