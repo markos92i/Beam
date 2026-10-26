@@ -13,7 +13,7 @@ public enum AuthError: Error, LoggableError, Sendable, Equatable {
     case failedToRefreshToken
     case cancelled
 
-    @inline(__always)
+    @inline(always)
     var logDescription: String {
         switch self {
         case .missingToken:

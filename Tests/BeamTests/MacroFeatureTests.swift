@@ -50,10 +50,10 @@ protocol OptionalQueryAPI {
     headers: [:]
 )
 protocol ConfigOverrideAPI {
-    @Get("/resilient", timeout: 120, retry: .resilient)
+    @Get("/resilient", timeout: .seconds(120), retry: .resilient)
     func resilientFetch() async throws(APIError<Void>) -> ResponseMock
 
-    @Post("/fast", timeout: 5, retry: .none)
+    @Post("/fast", timeout: .seconds(5), retry: .none)
     func fastPost(body: ResponseMock) async throws(APIError<Void>)
 }
 
@@ -67,9 +67,9 @@ struct MacroFeatureTests {
     @Test
     func emptyPathGetRequest() async throws {
         let mockBody = [ResponseMock(id: "1", value: 10)]
-        let expectedData = try JSONEncoder().encode(mockBody)
+        let expectedData = json(mockBody)
 
-        let session = MockSession({ request in
+        let session = MockSession({ (request) throws(URLError) in
             // Verify URL has no trailing empty path segment
             #expect(request.url?.absoluteString == "https://base-url.com/schedules")
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
@@ -85,9 +85,9 @@ struct MacroFeatureTests {
     @Test
     func emptyPathPostRequest() async throws {
         let input = ResponseMock(id: "new", value: 99)
-        let expectedData = try JSONEncoder().encode(input)
+        let expectedData = json(input)
 
-        let session = MockSession({ request in
+        let session = MockSession({ (request) throws(URLError) in
             #expect(request.url?.absoluteString == "https://base-url.com/schedules")
             #expect(request.httpMethod == "POST")
             let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
@@ -103,7 +103,7 @@ struct MacroFeatureTests {
 
     @Test
     func optionalQueryParamWhenNil() async throws {
-        let session = MockSession({ request in
+        let session = MockSession({ (request) throws(URLError) in
             let url = request.url!.absoluteString
             // When reason is nil, it should NOT appear in the URL
             #expect(!url.contains("reason"))
@@ -118,7 +118,7 @@ struct MacroFeatureTests {
 
     @Test
     func optionalQueryParamWhenPresent() async throws {
-        let session = MockSession({ request in
+        let session = MockSession({ (request) throws(URLError) in
             let url = request.url!.absoluteString
             // When reason is provided, it should appear in the URL
             #expect(url.contains("reason=duplicate"))
@@ -134,9 +134,9 @@ struct MacroFeatureTests {
     @Test
     func mixedOptionalAndRequiredQuery() async throws {
         let mockBody = [ResponseMock(id: "found", value: 1)]
-        let expectedData = try JSONEncoder().encode(mockBody)
+        let expectedData = json(mockBody)
 
-        let session = MockSession({ request in
+        let session = MockSession({ (request) throws(URLError) in
             let url = request.url!.absoluteString
             #expect(url.contains("term=swift"))
             // page is nil, should not be present
@@ -153,9 +153,9 @@ struct MacroFeatureTests {
     @Test
     func mixedOptionalAndRequiredQueryBothPresent() async throws {
         let mockBody = [ResponseMock(id: "found", value: 1)]
-        let expectedData = try JSONEncoder().encode(mockBody)
+        let expectedData = json(mockBody)
 
-        let session = MockSession({ request in
+        let session = MockSession({ (request) throws(URLError) in
             let url = request.url!.absoluteString
             #expect(url.contains("term=swift"))
             #expect(url.contains("page=2"))
@@ -183,6 +183,69 @@ struct MacroFeatureTests {
             #expect(error == .invalidURL)
         }
     }
+
+    // MARK: - Per-route retry override
+
+    /// Regression: `retry: .none` used to resolve to `Optional.none` ("keep the
+    /// default"), so the route still retried once.
+    @Test
+    func retryNoneDisablesRetries() async throws {
+        let counter = AtomicCounter()
+
+        let session = MockSession({ (request) throws(URLError) in
+            await counter.increment()
+            let response = HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
+            return (Data(), response)
+        })
+
+        let api = ConfigOverrideAPIClient(session: session)
+        do {
+            try await api.fastPost(body: ResponseMock(id: "x", value: 1))
+            Issue.record("Should have thrown")
+        } catch {
+            #expect(error.status?.rawValue == 500)
+        }
+        #expect(await counter.value == 1)
+    }
+
+    // MARK: - Session injection
+
+    /// Regression: the generated `init(session:)` copied the configuration field by
+    /// field and dropped `logLevel`.
+    @Test
+    func injectingASessionKeepsTheRestOfTheConfiguration() {
+        let original = APIConfiguration(
+            host: "https://base-url.com",
+            base: "/v1",
+            headers: ["X-App": "1"],
+            config: RequestConfig(retry: .none, timeout: .seconds(5)),
+            interceptors: [RequestIDInterceptor()],
+            logLevel: .error
+        )
+        let injected = original.replacing(session: MockSession({ (_) throws(URLError) in throw URLError(.unknown) }))
+
+        #expect(injected.session is MockSession)
+        #expect(injected.host == original.host)
+        #expect(injected.base == original.base)
+        #expect(injected.headers == original.headers)
+        #expect(injected.config.retry == original.config.retry)
+        #expect(injected.config.timeout == original.config.timeout)
+        #expect(injected.interceptors.count == 1)
+        #expect(injected.logLevel == .error)
+        #expect(original.replacing(session: nil).session is Session<Foreground>)
+    }
+
+    @Test
+    func timeoutOverrideIsAppliedToRequest() async throws {
+        let session = MockSession({ (request) throws(URLError) in
+            #expect(request.timeoutInterval == 5)
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (Data(), response)
+        })
+
+        let api = ConfigOverrideAPIClient(session: session)
+        try await api.fastPost(body: ResponseMock(id: "x", value: 1))
+    }
 }
 
 
@@ -207,7 +270,7 @@ extension MacroFeatureTests {
 
     @Test
     func pathTemplatePlaceholdersArePreserved() async throws {
-        let session = MockSession { request in
+        let session = MockSession { (request) throws(URLError) in
             // Verify the actual URL has the interpolated value
             #expect(request.url?.absoluteString == "https://api.example.com/users/42")
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
@@ -220,7 +283,7 @@ extension MacroFeatureTests {
 
     @Test
     func multiplePathPlaceholders() async throws {
-        let session = MockSession { request in
+        let session = MockSession { (request) throws(URLError) in
             // Verify the actual URL has the interpolated values
             #expect(request.url?.absoluteString == "https://api.example.com/users/123/posts/456")
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!

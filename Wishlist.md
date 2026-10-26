@@ -59,3 +59,49 @@ protocol UsersAPI { ... }
 @API(config: sharedConfig, base: "/v2/orders")
 protocol OrdersAPI { ... }
 ```
+
+---
+
+## Diagnósticos de la macro
+
+Los tipos no soportados ya dan un error claro (overloads `unavailable` de `_Route`). Quedan los fallos que dependen de la estructura y no del tipo:
+
+- Placeholder `{id}` en el path sin parámetro que case → hoy da un error críptico dentro de la expansión.
+- Método del protocolo sin `@Get/@Post/...` → se ignora y acaba en un "does not conform" confuso.
+- Método con `throws` sin tipar → se genera `APIError<Void>` en silencio (contra la regla de typed throws del proyecto).
+
+## Formato de arrays en query
+
+`query ids: [Int]` no compila a propósito (mensaje explícito) hasta decidir el formato que esperan los backends: clave repetida (`ids=1&ids=2`) o separado por comas (`ids=1,2`). Es una sola sobrecarga en `_Route.query`; la app no usa arrays en query hoy.
+
+Emitir `Diagnostic` sobre el miembro concreto, con fix-it cuando sea posible.
+
+---
+
+## Simplificar los métodos de `Endpoint`
+
+`Endpoint` tiene 12 métodos públicos casi idénticos (`data`, `upload*`, `download*`, `uploadTask*`, `downloadTask*`): todos son `perform { … decodeDataResponse }` o `perform { … resolveDownloadResponse }`. Con dos helpers privados (uno que decodifica `(Data, HTTPURLResponse)` y otro para ficheros) y un `uploadBody()` para el guard de `missingUploadData`, cada método queda en una línea sin cambiar la API pública.
+
+---
+
+## `ByteStream.allLines` sin task no estructurada
+
+`allLines` crea un `Task` y un `AsyncThrowingStream` para partir líneas conservando las vacías (necesario para SSE). Ese tipo se filtra a la API pública: `SSESequence<AsyncThrowingStream<String, Error>, Element>`. Sustituirlo por un `AsyncSequence` propio que itere los bytes directamente (sin task, cancelación y backpressure naturales) y devolver `some AsyncSequence<Element, any Error>` desde `sseEvents()` / `sseRawEvents()`. Verificado que ese tipo opaco compila con target iOS 18.
+
+---
+
+## Cancelación en el camino de handles (`UploadTask` / `DownloadTask`)
+
+En el camino async (`data`, `upload`, `download`) cancelar la Swift Task cancela la transferencia. En el camino de handles, `SessionDelegate.awaitDownload/awaitUpload` usan `withCheckedThrowingContinuation` sin `withTaskCancellationHandler`: cancelar la Swift Task no hace nada, solo `handle.cancel()`. Decidir el comportamiento: en sesión background quizá la transferencia debe seguir, pero al menos el que espera debería dejar de esperar (y la cancelación debería resolverse igual en ambos caminos).
+
+---
+
+## `UploadTask.start(resumeFrom:)` usa el camino foreground
+
+`start()`, `start(data:)` y `start(url:)` usan `endpoint.uploadTask*` (compatible con background), pero `start(resumeFrom:)` llama a `endpoint.upload(resumeFrom:)` (foreground). Valorar un `uploadTask(withResumeData:)` en `Client`/`SessionProtocol` para que el handle sea coherente.
+
+---
+
+## Igualdad de `APIError`
+
+`APIError ==` compara solo `id`: `.connectionClosed(code: 1000) == .connectionClosed(code: 1006)` y dos `.http(status: 500)` con body distinto son `true`. Si la intención es "mismo tipo de error", hacerlo explícito (p. ej. una propiedad `kind` o `~=`) y que `==` compare valores cuando `Failure: Equatable`.

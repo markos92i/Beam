@@ -11,29 +11,33 @@ public struct APIRequest: Sendable {
     public var method: HTTPMethod
     public var host: String
     public var path: String
+    /// The route with `{name}` placeholders: groups error reports and identifies background transfers.
     public var pathTemplate: String
     public var query: [URLQueryItem] = []
     public var headers: [String: String] = [:]
-    public var accept: ContentType? = nil
     public var body: HTTPBody? = nil
+
+    /// Set by `@API` so a placeholder value containing `/` stays inside its segment.
+    var percentEncodedPath: String? = nil
+
+    /// The ``APIValues`` property the route found `nil`; fails the request before sending.
+    var missingValue: String? = nil
     
     public init(
         method: HTTPMethod,
         host: String,
         path: String,
-        pathTemplate: String = "",
+        pathTemplate: String? = nil,
         query: [URLQueryItem] = [],
         headers: [String: String] = [:],
-        accept: ContentType? = nil,
         body: HTTPBody? = nil
     ) {
         self.method = method
         self.host = host
         self.path = path
-        self.pathTemplate = pathTemplate
+        self.pathTemplate = pathTemplate ?? path
         self.query = query
         self.headers = headers
-        self.accept = accept
         self.body = body
     }
 }
@@ -42,23 +46,27 @@ extension APIRequest {
     public var url: URL? {
         guard var urlComponents = URLComponents(string: host) else { return nil }
 
-        // Append path (preserving any existing path in host)
-        let basePath = urlComponents.path
-        let fullPath = basePath.isEmpty || basePath == "/"
-            ? path
-            : basePath + path
-        urlComponents.path = fullPath
+        if let percentEncodedPath {
+            let basePath = urlComponents.percentEncodedPath
+            urlComponents.percentEncodedPath = basePath.isEmpty || basePath == "/"
+                ? percentEncodedPath
+                : basePath + percentEncodedPath
+        } else {
+            let basePath = urlComponents.path
+            urlComponents.path = basePath.isEmpty || basePath == "/"
+                ? path
+                : basePath + path
+        }
 
-        // Merge query items
         let allItems = (urlComponents.queryItems ?? []) + query
         urlComponents.queryItems = allItems.isEmpty ? nil : allItems
 
         return urlComponents.url
     }
 
-    /// Auto-generated headers from body content type.
+    /// Headers derived from the body's content type.
     public var contentHeaders: [String: String] { body?.contentType.header ?? [:] }
 
-    /// Merges all headers: auto-generated first, then user-defined (user wins on conflict).
+    /// ``contentHeaders`` merged with ``headers``, which win on conflict.
     public var allHeaders: [String: String] { contentHeaders.merging(headers) { _, user in user } }
 }

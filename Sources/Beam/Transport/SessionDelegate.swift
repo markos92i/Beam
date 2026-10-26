@@ -6,152 +6,246 @@
 //
 
 import Foundation
+import Synchronization
 
-/// Internal session-level delegate that owns the URLSession lifecycle.
-///
-/// Handles:
-/// - Server trust evaluation (SSL pinning) via an injected ``TransportTrustPolicy``.
-/// - Background session event completion signaling.
-/// - Per-task delegate forwarding for foreground task-based operations.
-/// - Awaitable task completion for background sessions via stored continuations.
-/// - Accumulating results when no continuation or delegate exists (app relaunch scenario).
-public final class SessionDelegate: NSObject, @unchecked Sendable {
+/// The delegate of every Beam session: server trust, delegate-driven transfers and,
+/// in a background session, the results nobody awaits.
+public final class SessionDelegate: NSObject, Sendable {
     private let trustPolicy: (any TransportTrustPolicy)?
+    let store: TransferStore?
+    private let state = Mutex(State())
 
-    /// Accumulated results from background transfers completed without a waiter.
-    private(set) var pendingResults: [BackgroundTransferResult] = []
+    /// Gets `nil` when the task's result was already handed out.
+    typealias Waiter = CheckedContinuation<BackgroundTransferResult?, Never>
 
-    /// Accumulated response data for upload tasks (keyed by task identifier).
-    private var uploadDataBuffers: [Int: Data] = [:]
+    private struct State {
+        var uploadBodies: [Int: Data] = [:]
+        /// More than one when a background `start(id:)` attaches to a task in flight.
+        var waiters: [Int: [Waiter]] = [:]
+        /// Result already handed out: a call that attaches later finds nothing to wait for.
+        var finishedTasks: Set<Int> = []
+        /// URLSession reports a trust rejection as `.cancelled`.
+        var rejectedTrust: Set<Int> = []
+        var listeners: [UUID: Listener] = [:]
+        /// Events finished with no `.eventsDelivered` listener: the next one ends right away.
+        var didFinishEvents = false
+    }
 
-    /// Continuation for streaming pending results to consumers.
-    private var resultsContinuation: AsyncStream<BackgroundTransferResult>.Continuation?
-
-    /// Continuations waiting for download task completion (keyed by task identifier).
-    private var downloadContinuations: [Int: CheckedContinuation<(URL, URLResponse), Error>] = [:]
-
-    /// Continuations waiting for upload task completion (keyed by task identifier).
-    private var uploadContinuations: [Int: CheckedContinuation<(Data, URLResponse), Error>] = [:]
-
-    init(trustPolicy: (any TransportTrustPolicy)? = nil) {
+    init(trustPolicy: (any TransportTrustPolicy)? = nil, store: TransferStore? = nil) {
         self.trustPolicy = trustPolicy
+        self.store = store
     }
 
-    // MARK: - Awaitable Task Completion
+    /// A session serves many APIs, so it logs with the global ``BeamLogger/level``.
+    private static let logger = BeamLogger()
 
-    /// Awaits completion of a download task. Stores a continuation that the
-    /// delegate callbacks will resume when the transfer finishes.
-    /// The task is resumed internally — do not call `task.resume()` beforehand.
-    public func awaitDownload(for task: URLSessionDownloadTask) async throws -> (URL, URLResponse) {
-        try await withCheckedThrowingContinuation { continuation in
-            downloadContinuations[task.taskIdentifier] = continuation
-            task.resume()
+    // MARK: - Waiting for a task
+
+    /// `nil` when the result was already handed out: a task may finish just as a `start(id:)` attaches.
+    func attach(to task: URLSessionTask) async -> BackgroundTransferResult? {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (waiter: Waiter) in
+                let waiting = state.withLock { state in
+                    guard !state.finishedTasks.contains(task.taskIdentifier) else { return false }
+                    state.waiters[task.taskIdentifier, default: []].append(waiter)
+                    return true
+                }
+                if waiting { task.resume() } else { waiter.resume(returning: nil) }
+            }
+        } onCancel: {
+            // Cancelling also works before `resume()`: URLSession still completes the task.
+            task.cancel()
         }
     }
 
-    /// Awaits completion of an upload task. Stores a continuation that the
-    /// delegate callbacks will resume when the transfer finishes.
-    /// The task is resumed internally — do not call `task.resume()` beforehand.
-    public func awaitUpload(for task: URLSessionTask) async throws -> (Data, URLResponse) {
-        try await withCheckedThrowingContinuation { continuation in
-            uploadContinuations[task.taskIdentifier] = continuation
-            task.resume()
+    func isFinished(_ task: URLSessionTask) -> Bool {
+        state.withLock { $0.finishedTasks.contains(task.taskIdentifier) }
+    }
+
+    /// Takes the waiters and marks the task finished at once, so a later attach doesn't wait forever.
+    private func takeWaiters(of taskID: Int) -> [Waiter]? {
+        state.withLock { state in
+            let waiters = state.waiters.removeValue(forKey: taskID)
+            if waiters != nil { state.finishedTasks.insert(taskID) }
+            return waiters
         }
     }
 
-    // MARK: - Pending Results
-
-    /// Removes and returns all accumulated pending results.
-    func consumePendingResults() -> [BackgroundTransferResult] {
-        let results = pendingResults
-        pendingResults = []
-        return results
+    /// Each call gets a file of its own: every call moves the one it gets.
+    private func deliver(_ result: BackgroundTransferResult, to waiters: [Waiter]) {
+        guard case .downloaded(let file) = result.outcome else {
+            for waiter in waiters { waiter.resume(returning: result) }
+            return
+        }
+        for (waiter, kept) in zip(waiters, Self.keep(file, count: waiters.count)) {
+            var own = result
+            own.outcome = .init(keeping: kept)
+            waiter.resume(returning: own)
+        }
     }
 
-    /// Sets a continuation for streaming results as they arrive.
-    func setResultsContinuation(_ continuation: AsyncStream<BackgroundTransferResult>.Continuation?) {
-        resultsContinuation = continuation
+    // MARK: - Trust Rejections
+
+    /// A cancellation caused by the trust policy becomes `.serverCertificateUntrusted`, not a user cancellation.
+    func resolve(_ error: URLError, for task: URLSessionTask?) -> URLError {
+        guard error.code == .cancelled, let task,
+              state.withLock({ $0.rejectedTrust.remove(task.taskIdentifier) }) != nil else { return error }
+        var userInfo = error.userInfo
+        userInfo[NSLocalizedDescriptionKey] = "The server's certificate was rejected by the trust policy"
+        return URLError(.serverCertificateUntrusted, userInfo: userInfo)
     }
 
-    private func addResult(_ result: BackgroundTransferResult) {
-        pendingResults.append(result)
-        resultsContinuation?.yield(result)
+    // MARK: - Results nobody awaits
+
+    // Yielding and finishing under the lock keeps arrival order and makes subscribing atomic.
+
+    struct Listener {
+        let continuation: AsyncStream<BackgroundTransferResult>.Continuation
+        let untilEventsDelivered: Bool
+    }
+
+    func listen(_ continuation: AsyncStream<BackgroundTransferResult>.Continuation, untilEventsDelivered: Bool) -> UUID {
+        state.withLock { state in
+            let id = UUID()
+            if untilEventsDelivered, state.didFinishEvents {
+                state.didFinishEvents = false
+                continuation.finish()
+            } else {
+                state.listeners[id] = Listener(continuation: continuation, untilEventsDelivered: untilEventsDelivered)
+            }
+            return id
+        }
+    }
+
+    func stopListening(_ id: UUID) {
+        state.withLock { _ = $0.listeners.removeValue(forKey: id) }
+    }
+
+    /// Called after the result is kept: a call attaching before gets it here, one after takes it from the store.
+    private func handOut(_ result: BackgroundTransferResult, of task: URLSessionTask) {
+        let waiters = state.withLock { state in
+            state.finishedTasks.insert(task.taskIdentifier)
+            return state.waiters.removeValue(forKey: task.taskIdentifier)
+        }
+        guard let waiters else {
+            Self.logFinished(result)
+            state.withLock { state in
+                for listener in state.listeners.values { listener.continuation.yield(result) }
+            }
+            return
+        }
+        // The late calls claim it, as a `start(id:)` claims a stored result.
+        deliver(result, to: waiters)
+        if let id = result.storeID { store?.remove(id) }
+    }
+
+    /// No call will log a transfer nobody awaits.
+    private static func logFinished(_ result: BackgroundTransferResult) {
+        let description = BackgroundTaskDescription(result.taskDescription)
+        let failure: String? = if case .failed(let error) = result.outcome { error.logDescription } else { nil }
+        logger.log(.backgroundFinished(
+            id: description?.id ?? "?",
+            method: description?.method ?? result.request?.httpMethod ?? "",
+            path: description?.path ?? "",
+            status: result.response?.statusCode,
+            failure: failure
+        ))
+    }
+
+    /// URLSession deletes `location` as soon as `didFinishDownloadingTo` returns.
+    private static func keep(_ location: URL, count: Int) -> [Result<URL, TransportError>] {
+        let first = FileUtils.temporaryLocation()
+        do throws(FileError) {
+            try FileUtils.move(location, to: first)
+        } catch {
+            return Array(repeating: .failure(.file(error)), count: count)
+        }
+        let copies = (1..<max(count, 1)).map { _ -> Result<URL, TransportError> in
+            let copy = FileUtils.temporaryLocation()
+            do throws(FileError) {
+                try FileUtils.copy(first, to: copy)
+                return .success(copy)
+            } catch {
+                return .failure(.file(error))
+            }
+        }
+        return [.success(first)] + copies
     }
 }
 
 // MARK: - URLSessionDelegate
 
 extension SessionDelegate: URLSessionDelegate {
-    public func urlSession(
-        _ session: URLSession,
-        didReceive challenge: URLAuthenticationChallenge
-    ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
-        if let trustPolicy {
-            return trustPolicy.evaluate(challenge: challenge)
-        }
-        return (.performDefaultHandling, nil)
-    }
-
     public func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
-        resultsContinuation?.finish()
-        resultsContinuation = nil
+        state.withLock { state in
+            let waiting = state.listeners.filter { $0.value.untilEventsDelivered }
+            guard !waiting.isEmpty else {
+                state.didFinishEvents = true
+                return
+            }
+            for (id, listener) in waiting {
+                listener.continuation.finish()
+                state.listeners[id] = nil
+            }
+        }
     }
 }
 
 // MARK: - URLSessionTaskDelegate
 
 extension SessionDelegate: URLSessionTaskDelegate {
+    /// Per task (no session-level handler), to know which task a rejection belongs to.
+    public func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didReceive challenge: URLAuthenticationChallenge
+    ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
+        guard let trustPolicy else { return (.performDefaultHandling, nil) }
+
+        let decision = trustPolicy.evaluate(challenge: challenge)
+        if decision.0 == .cancelAuthenticationChallenge,
+           challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
+            state.withLock { _ = $0.rejectedTrust.insert(task.taskIdentifier) }
+        }
+        return decision
+    }
+
     public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
-        // 1. Upload continuation waiting — resume it.
-        if let continuation = uploadContinuations.removeValue(forKey: task.taskIdentifier) {
-            if let error {
-                continuation.resume(throwing: error)
-            } else {
-                let data = uploadDataBuffers.removeValue(forKey: task.taskIdentifier) ?? Data()
-                continuation.resume(returning: (data, task.response!))
-            }
-            return
-        }
+        let waiters = takeWaiters(of: task.taskIdentifier)
+        let body = state.withLock { $0.uploadBodies.removeValue(forKey: task.taskIdentifier) } ?? Data()
 
-        // 2. Download continuation that wasn't resolved by didFinishDownloadingTo (error case).
-        if let continuation = downloadContinuations.removeValue(forKey: task.taskIdentifier) {
-            continuation.resume(throwing: error ?? URLError(.cannotParseResponse))
-            return
-        }
-
-        // 3. Foreground path — forward to per-task delegate.
-        if task.delegate != nil {
+        // A task of URLSession's async API: its call gets the error, and resolves it.
+        if waiters == nil, task.delegate != nil {
             task.delegate?.urlSession?(session, task: task, didCompleteWithError: error)
             return
         }
+        // URLSession's callback is untyped; it documents `URLError`.
+        let urlError = error.map { resolve(URLError(bridging: $0), for: task) }
 
-        // 4. No waiter (app relaunched) — accumulate the result.
-        let originalURL = task.originalRequest?.url
-        let taskDescription = task.taskDescription
-        let statusCode = (task.response as? HTTPURLResponse)?.statusCode
-
-        if let error {
-            let transportError: TransportError = switch error {
-            case let urlError as URLError: .url(urlError)
-            case let transport as TransportError: transport
-            default: .unknown(error)
+        if let waiters {
+            // A finished download was handed out in didFinishDownloadingTo.
+            let outcome: BackgroundTransferResult.Outcome = if let urlError {
+                .failed(.network(urlError))
+            } else if task is URLSessionDownloadTask {
+                .failed(.network(URLError(.cannotParseResponse)))
+            } else {
+                .uploaded(body)
             }
-            addResult(BackgroundTransferResult(
-                originalURL: originalURL,
-                taskDescription: taskDescription,
-                statusCode: statusCode,
-                outcome: .failed(transportError)
-            ))
-        } else if task is URLSessionUploadTask {
-            let data = uploadDataBuffers.removeValue(forKey: task.taskIdentifier) ?? Data()
-            addResult(BackgroundTransferResult(
-                originalURL: originalURL,
-                taskDescription: taskDescription,
-                statusCode: statusCode,
-                outcome: .uploaded(data)
-            ))
+            return deliver(BackgroundTransferResult(task: task, outcome: outcome), to: waiters)
         }
-        // Downloads are handled in didFinishDownloadingTo
+
+        // A cancellation isn't stored: the app cancelled it itself (e.g. on logout, after clearing the store).
+        let result: BackgroundTransferResult
+        if let urlError {
+            let failed = BackgroundTransferResult(task: task, outcome: .failed(.network(urlError)))
+            result = urlError.code == .cancelled ? failed : store?.saveFailure(of: task, urlError) ?? failed
+        } else if task is URLSessionUploadTask {
+            result = store?.save(body, ofUpload: task) ?? BackgroundTransferResult(task: task, outcome: .uploaded(body))
+        } else {
+            // A finished download was handled in didFinishDownloadingTo.
+            return
+        }
+        handOut(result, of: task)
     }
 }
 
@@ -159,59 +253,17 @@ extension SessionDelegate: URLSessionTaskDelegate {
 
 extension SessionDelegate: URLSessionDownloadDelegate {
     public func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        let httpResponse = downloadTask.response as? HTTPURLResponse
-        let suggestedFilename = httpResponse?.suggestedFilename
-        let contentType = httpResponse?.mimeType ?? ContentType.data.value
-
-        // 1. Download continuation waiting — resume it.
-        if let continuation = downloadContinuations.removeValue(forKey: downloadTask.taskIdentifier) {
-            let filename = FileUtils.resolveFilename(suggestedFilename: suggestedFilename, contentType: contentType)
-            let safeCopy = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
-            do {
-                if FileManager.default.fileExists(atPath: safeCopy.path) {
-                    try FileManager.default.removeItem(at: safeCopy)
-                }
-                try FileManager.default.copyItem(at: location, to: safeCopy)
-                continuation.resume(returning: (safeCopy, downloadTask.response!))
-            } catch {
-                continuation.resume(throwing: error)
-            }
-            return
+        if let waiters = takeWaiters(of: downloadTask.taskIdentifier) {
+            return deliver(BackgroundTransferResult(task: downloadTask, outcome: .downloaded(location)), to: waiters)
         }
-
-        // 2. Foreground path — forward to per-task delegate.
+        // A task of URLSession's async API: its call gets the file.
         if let taskDelegate = downloadTask.delegate as? URLSessionDownloadDelegate {
-            taskDelegate.urlSession(session, downloadTask: downloadTask, didFinishDownloadingTo: location)
-            return
+            return taskDelegate.urlSession(session, downloadTask: downloadTask, didFinishDownloadingTo: location)
         }
-
-        // 3. No waiter (background transfer) — copy file and accumulate result.
-        let filename = FileUtils.resolveFilename(suggestedFilename: suggestedFilename, contentType: contentType)
-        let safeCopy = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
-
-        let originalURL = downloadTask.originalRequest?.url
-        let taskDescription = downloadTask.taskDescription
-        let statusCode = httpResponse?.statusCode
-
-        do {
-            if FileManager.default.fileExists(atPath: safeCopy.path) {
-                try FileManager.default.removeItem(at: safeCopy)
-            }
-            try FileManager.default.copyItem(at: location, to: safeCopy)
-            addResult(BackgroundTransferResult(
-                originalURL: originalURL,
-                taskDescription: taskDescription,
-                statusCode: statusCode,
-                outcome: .downloaded(safeCopy)
-            ))
-        } catch {
-            addResult(BackgroundTransferResult(
-                originalURL: originalURL,
-                taskDescription: taskDescription,
-                statusCode: statusCode,
-                outcome: .failed(.unknown(error))
-            ))
-        }
+        // Nobody waits: on disk in a background session, so it survives the process.
+        let result = store?.save(location, of: downloadTask)
+            ?? BackgroundTransferResult(task: downloadTask, outcome: .init(keeping: Self.keep(location, count: 1)[0]))
+        handOut(result, of: downloadTask)
     }
 }
 
@@ -219,19 +271,15 @@ extension SessionDelegate: URLSessionDownloadDelegate {
 
 extension SessionDelegate: URLSessionDataDelegate {
     public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        // 1. Upload continuation waiting — buffer data for it.
-        if uploadContinuations[dataTask.taskIdentifier] != nil {
-            uploadDataBuffers[dataTask.taskIdentifier, default: Data()].append(data)
-            return
+        let taskDelegate = dataTask.delegate as? URLSessionDataDelegate
+        // A task of URLSession's async API gets its data itself.
+        let buffered = state.withLock { state in
+            guard state.waiters[dataTask.taskIdentifier] != nil || taskDelegate == nil else { return false }
+            state.uploadBodies[dataTask.taskIdentifier, default: Data()].append(data)
+            return true
         }
-
-        // 2. Foreground path — forward to per-task delegate.
-        if let taskDelegate = dataTask.delegate as? URLSessionDataDelegate {
-            taskDelegate.urlSession?(session, dataTask: dataTask, didReceive: data)
-            return
+        if !buffered {
+            taskDelegate?.urlSession?(session, dataTask: dataTask, didReceive: data)
         }
-
-        // 3. No waiter — buffer data for the upload result.
-        uploadDataBuffers[dataTask.taskIdentifier, default: Data()].append(data)
     }
 }

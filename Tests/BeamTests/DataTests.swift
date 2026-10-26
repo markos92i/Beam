@@ -13,9 +13,9 @@ struct DataTests {
     @Test
     func requestSuccess() async throws {
         let mockBody = ResponseMock(id: "123", value: 1000)
-        let expectedData = try JSONEncoder().encode(mockBody)
+        let expectedData = json(mockBody)
 
-        let session = MockSession({ request in
+        let session = MockSession({ (request) throws(URLError) in
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (expectedData, response)
         })
@@ -28,7 +28,7 @@ struct DataTests {
 
     @Test
     func requestFailure() async throws {
-        let session = MockSession({ request in
+        let session = MockSession({ (request) throws(URLError) in
             let response = HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
             return (Data(), response)
         })

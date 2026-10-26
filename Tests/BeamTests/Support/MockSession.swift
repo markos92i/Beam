@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Synchronization
 @testable import Beam
 
 actor MockSession: SessionProtocol {
@@ -15,15 +16,16 @@ actor MockSession: SessionProtocol {
 
     let sessionDelegate = SessionDelegate()
 
-    typealias DataHandler = @Sendable (URLRequest) async throws -> (Data, URLResponse)
-    typealias UploadResumeHandler = @Sendable (Data) async throws -> (Data, URLResponse)
-    typealias DownloadResumeHandler = @Sendable (Data) async throws -> (URL, URLResponse)
+    // Handlers throw `URLError`, like a real session: anything else can't reach Beam.
+    typealias DataHandler = @Sendable (URLRequest) async throws(URLError) -> (Data, URLResponse)
+    typealias UploadResumeHandler = @Sendable (Data) async throws(URLError) -> (Data, URLResponse)
+    typealias DownloadResumeHandler = @Sendable (Data) async throws(URLError) -> (URL, URLResponse)
 
     struct Stub<T: Sendable>: Sendable {
         let delay: Duration?
-        let result: Result<T, Error>
+        let result: Result<T, URLError>
 
-        init(_ result: Result<T, Error>, delay: Duration? = nil) {
+        init(_ result: Result<T, URLError>, delay: Duration? = nil) {
             self.result = result
             self.delay = delay
         }
@@ -32,6 +34,8 @@ actor MockSession: SessionProtocol {
     // MARK: - State
 
     private(set) var recordedRequests: [URLRequest] = []
+    /// The data each in-memory upload sent, in order.
+    private(set) var recordedUploads: [Data] = []
 
     private let dataHandler: DataHandler?
     private let uploadResumeHandler: UploadResumeHandler?
@@ -49,8 +53,8 @@ actor MockSession: SessionProtocol {
     /// Closure-based init for simple tests. The handler is called for data/upload/download requests.
     init(_ handler: @escaping DataHandler, _ uploadResumeHandler: UploadResumeHandler? = nil, delay: TimeInterval? = nil) {
         if let delay {
-            let delayedHandler: DataHandler = { request in
-                try await Task.sleep(for: .seconds(delay))
+            let delayedHandler: DataHandler = { (request) throws(URLError) in
+                do { try await Task.sleep(for: .seconds(delay)) } catch { throw URLError(.cancelled) }
                 return try await handler(request)
             }
             self.dataHandler = delayedHandler
@@ -94,7 +98,7 @@ actor MockSession: SessionProtocol {
         dataIndex = 0
     }
 
-    func stubData(error: Error) {
+    func stubData(error: URLError) {
         dataStubs = [Stub(.failure(error))]
         dataIndex = 0
     }
@@ -111,6 +115,7 @@ actor MockSession: SessionProtocol {
 
     func reset() {
         recordedRequests = []
+        recordedUploads = []
         dataStubs = []
         uploadStubs = []
         downloadStubs = []
@@ -121,41 +126,37 @@ actor MockSession: SessionProtocol {
 
     // MARK: - SessionProtocol Conformance
 
-    func data(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse) {
+    func data(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws(URLError) -> (Data, URLResponse) {
         recordedRequests.append(request)
         if let handler = dataHandler { return try await handler(request) }
         return try await resolveData()
     }
 
-    func upload(for request: URLRequest, from data: Data, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse) {
+    func upload(for request: URLRequest, from data: Data, delegate: URLSessionTaskDelegate?) async throws(URLError) -> (Data, URLResponse) {
+        recordedRequests.append(request)
+        recordedUploads.append(data)
+        if let handler = dataHandler { return try await handler(request) }
+        return try await resolveUpload()
+    }
+
+    func upload(for request: URLRequest, fromFile url: URL, delegate: URLSessionTaskDelegate?) async throws(URLError) -> (Data, URLResponse) {
         recordedRequests.append(request)
         if let handler = dataHandler { return try await handler(request) }
         return try await resolveUpload()
     }
 
-    func upload(for request: URLRequest, fromFile url: URL, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse) {
-        recordedRequests.append(request)
-        if let handler = dataHandler { return try await handler(request) }
-        return try await resolveUpload()
-    }
-
-    func upload(resumeFrom data: Data, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse) {
-        if let handler = uploadResumeHandler { return try await handler(data) }
-        return try await resolveUpload()
-    }
-
-    func download(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws -> (URL, URLResponse) {
+    func download(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws(URLError) -> (URL, URLResponse) {
         recordedRequests.append(request)
         if let handler = dataHandler {
             let (data, response) = try await handler(request)
             let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-            try data.write(to: tempURL)
+            do { try data.write(to: tempURL) } catch { throw URLError(.cannotWriteToFile) }
             return (tempURL, response)
         }
         return try await resolveDownload()
     }
 
-    func download(resumeFrom data: Data, delegate: URLSessionTaskDelegate?) async throws -> (URL, URLResponse) {
+    func download(resumeFrom data: Data, delegate: URLSessionTaskDelegate?) async throws(URLError) -> (URL, URLResponse) {
         if let handler = downloadResumeHandler { return try await handler(data) }
         return try await resolveDownload()
     }
@@ -164,12 +165,25 @@ actor MockSession: SessionProtocol {
         URLSession.shared.webSocketTask(with: request)
     }
 
+    // MARK: - Delegate-driven tasks
+
+    // The tasks are real but never resumed: `awaitUpload`/`awaitDownload` answer them
+    // with the same handlers and stubs as the async API, and end with `.cancelled` as
+    // soon as the task is cancelled (by the call's `cancel()` or the calling task).
+
+    /// Resume data of the tasks created from it, by task identifier.
+    private nonisolated let resumedTasks = Mutex<[Int: Data]>([:])
+
+    private static let placeholder = URLRequest(url: URL(string: "https://mock.invalid/resume")!)
+
     nonisolated func downloadTask(with request: URLRequest) -> URLSessionDownloadTask {
         URLSession.shared.downloadTask(with: request)
     }
 
     nonisolated func downloadTask(withResumeData data: Data) -> URLSessionDownloadTask {
-        URLSession.shared.downloadTask(withResumeData: data)
+        let task = URLSession.shared.downloadTask(with: Self.placeholder)
+        resumedTasks.withLock { $0[task.taskIdentifier] = data }
+        return task
     }
 
     nonisolated func uploadTask(with request: URLRequest, from data: Data) -> URLSessionUploadTask {
@@ -180,22 +194,97 @@ actor MockSession: SessionProtocol {
         URLSession.shared.uploadTask(with: request, fromFile: url)
     }
 
-    func bytes(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws -> (URLSession.AsyncBytes, URLResponse) {
+    nonisolated func uploadTask(withResumeData data: Data) -> URLSessionUploadTask {
+        let task = URLSession.shared.uploadTask(with: Self.placeholder, from: Data())
+        resumedTasks.withLock { $0[task.taskIdentifier] = data }
+        return task
+    }
+
+    func awaitUpload(for task: URLSessionUploadTask) async throws(TransportError) -> (Data, URLResponse) {
+        let resume = resumedTasks.withLock { $0.removeValue(forKey: task.taskIdentifier) }
+        let request = task.originalRequest ?? Self.placeholder
+        if resume == nil { recordedRequests.append(request) }
+        let dataHandler = self.dataHandler
+        let uploadResumeHandler = self.uploadResumeHandler
+        do throws(URLError) {
+            return try await Self.answer(task) { () throws(URLError) in
+                if let resume, let uploadResumeHandler { return try await uploadResumeHandler(resume) }
+                if resume == nil, let dataHandler { return try await dataHandler(request) }
+                return try await self.resolveUpload()
+            }
+        } catch {
+            throw .network(error)
+        }
+    }
+
+    func awaitDownload(for task: URLSessionDownloadTask) async throws(TransportError) -> (URL, URLResponse) {
+        let resume = resumedTasks.withLock { $0.removeValue(forKey: task.taskIdentifier) }
+        let request = task.originalRequest ?? Self.placeholder
+        if resume == nil { recordedRequests.append(request) }
+        let dataHandler = self.dataHandler
+        let downloadResumeHandler = self.downloadResumeHandler
+        do throws(URLError) {
+            return try await Self.answer(task) { () throws(URLError) in
+                if let resume, let downloadResumeHandler { return try await downloadResumeHandler(resume) }
+                if resume == nil, let dataHandler {
+                    let (data, response) = try await dataHandler(request)
+                    return (try Self.temporaryFile(with: data), response)
+                }
+                return try await self.resolveDownload()
+            }
+        } catch {
+            throw .network(error)
+        }
+    }
+
+    /// Runs `body`, unless `task` is cancelled first.
+    private static func answer<T: Sendable>(
+        _ task: URLSessionTask,
+        _ body: @escaping @Sendable () async throws(URLError) -> T
+    ) async throws(URLError) -> T {
+        let result = await withTaskGroup(of: Result<T, URLError>?.self) { group in
+            group.addTask {
+                do throws(URLError) { return .success(try await body()) } catch { return .failure(error) }
+            }
+            group.addTask {
+                while task.state == .suspended || task.state == .running {
+                    do { try await Task.sleep(for: .milliseconds(5)) } catch { return nil }
+                }
+                return .failure(URLError(.cancelled))
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first ?? .failure(URLError(.cancelled))
+        }
+        return try result.get()
+    }
+
+    private static func temporaryFile(with data: Data) throws(URLError) -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        do { try data.write(to: url) } catch { throw URLError(.cannotWriteToFile) }
+        return url
+    }
+
+    func bytes(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws(URLError) -> (URLSession.AsyncBytes, URLResponse) {
         recordedRequests.append(request)
         if let handler = dataHandler {
             let (data, response) = try await handler(request)
             // Serve bytes via a file URL (URLSession supports file:// for bytes)
             let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".stream")
-            try data.write(to: tempURL)
-            let (bytes, _) = try await URLSession.shared.bytes(from: tempURL)
-            return (bytes, response)
+            do {
+                try data.write(to: tempURL)
+                let (bytes, _) = try await URLSession.shared.bytes(from: tempURL)
+                return (bytes, response)
+            } catch {
+                throw URLError(bridging: error)
+            }
         }
         throw URLError(.unknown)
     }
 
     // MARK: - Private
 
-    private func resolveData() async throws -> (Data, URLResponse) {
+    private func resolveData() async throws(URLError) -> (Data, URLResponse) {
         guard !dataStubs.isEmpty else { throw URLError(.unknown) }
         let idx = min(dataIndex, dataStubs.count - 1)
         let stub = dataStubs[idx]
@@ -204,7 +293,7 @@ actor MockSession: SessionProtocol {
         return try stub.result.get()
     }
 
-    private func resolveUpload() async throws -> (Data, URLResponse) {
+    private func resolveUpload() async throws(URLError) -> (Data, URLResponse) {
         guard !uploadStubs.isEmpty else { throw URLError(.unknown) }
         let idx = min(uploadIndex, uploadStubs.count - 1)
         let stub = uploadStubs[idx]
@@ -213,12 +302,31 @@ actor MockSession: SessionProtocol {
         return try stub.result.get()
     }
 
-    private func resolveDownload() async throws -> (URL, URLResponse) {
+    private func resolveDownload() async throws(URLError) -> (URL, URLResponse) {
         guard !downloadStubs.isEmpty else { throw URLError(.unknown) }
         let idx = min(downloadIndex, downloadStubs.count - 1)
         let stub = downloadStubs[idx]
         downloadIndex += 1
         if let delay = stub.delay { try? await Task.sleep(for: delay) }
         return try stub.result.get()
+    }
+}
+
+// MARK: - Background tasks made by hand
+
+extension Session where Kind == Background {
+    /// A download task of this session described with `key`, as Beam makes them: for
+    /// tests that drive the delegate callbacks themselves.
+    func makeDownloadTask(_ request: URLRequest, key: BackgroundTaskKey) -> URLSessionDownloadTask {
+        let task = urlSession.downloadTask(with: request)
+        task.taskDescription = BackgroundTaskDescription(key).encoded
+        return task
+    }
+
+    /// See ``makeDownloadTask(_:key:)``.
+    func makeUploadTask(_ request: URLRequest, fromFile file: URL, key: BackgroundTaskKey) -> URLSessionUploadTask {
+        let task = urlSession.uploadTask(with: request, fromFile: file)
+        task.taskDescription = BackgroundTaskDescription(key).encoded
+        return task
     }
 }

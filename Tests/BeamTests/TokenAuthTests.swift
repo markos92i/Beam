@@ -55,7 +55,7 @@ struct TokenAuthStateMachineTests {
 
     @Test("authenticate waits when in loading state")
     func authenticateWaitsInLoadingState() async throws {
-        let auth = TokenAuth(name: "Test") {
+        let auth = TokenAuth(name: "Test") { () async throws(AuthError) -> TokenAuth.Token in
             throw AuthError.failedToRefreshToken
         }
 
@@ -80,7 +80,7 @@ struct TokenAuthStateMachineTests {
 
     @Test("authenticate returns token when ready with valid token")
     func authenticateReturnsValidToken() async throws {
-        let auth = TokenAuth(name: "Test") {
+        let auth = TokenAuth(name: "Test") { () async throws(AuthError) -> TokenAuth.Token in
             throw AuthError.failedToRefreshToken
         }
 
@@ -155,10 +155,8 @@ struct TokenAuthStateMachineTests {
         do {
             try await auth.authenticate(request: &request)
             Issue.record("Should have thrown")
-        } catch let error as AuthError {
-            #expect(error == .missingToken)
         } catch {
-            Issue.record("Wrong error type: \(error)")
+            #expect(error == .missingToken)
         }
     }
 
@@ -166,9 +164,13 @@ struct TokenAuthStateMachineTests {
     func clearCancelsPendingRefresh() async throws {
         let refreshStarted = AtomicFlag()
 
-        let auth = TokenAuth(name: "Test") {
+        let auth = TokenAuth(name: "Test") { () async throws(AuthError) -> TokenAuth.Token in
             await refreshStarted.set()
-            try await Task.sleep(for: .seconds(10))
+            do {
+                try await Task.sleep(for: .seconds(10))
+            } catch {
+                throw AuthError.cancelled
+            }
             return .init(value: "token", expiresIn: 3600)
         }
 
@@ -205,9 +207,13 @@ struct TokenAuthRefreshDeduplicationTests {
     func concurrentRequestsShareRefresh() async throws {
         let refreshCount = AtomicCounter()
 
-        let auth = TokenAuth(name: "Test") {
+        let auth = TokenAuth(name: "Test") { () async throws(AuthError) -> TokenAuth.Token in
             await refreshCount.increment()
-            try await Task.sleep(for: .milliseconds(100))
+            do {
+                try await Task.sleep(for: .milliseconds(100))
+            } catch {
+                throw AuthError.cancelled
+            }
             return .init(value: "shared_token", expiresIn: 3600)
         }
 
@@ -264,7 +270,7 @@ struct TokenAuthSessionLostTests {
 
         let auth = TokenAuth(
             name: "Test",
-            refresh: { throw AuthError.invalidCredentials },
+            refresh: { () async throws(AuthError) -> TokenAuth.Token in throw AuthError.invalidCredentials },
             onSessionLost: { await sessionLostCalled.set() }
         )
 
@@ -275,10 +281,8 @@ struct TokenAuthSessionLostTests {
         do {
             try await auth.authenticate(request: &request)
             Issue.record("Should have thrown")
-        } catch let error as AuthError {
-            #expect(error == .invalidCredentials)
         } catch {
-            Issue.record("Wrong error type")
+            #expect(error == .invalidCredentials)
         }
 
         #expect(await sessionLostCalled.value)
@@ -290,7 +294,7 @@ struct TokenAuthSessionLostTests {
 
         let auth = TokenAuth(
             name: "Test",
-            refresh: { throw AuthError.failedToRefreshToken },
+            refresh: { () async throws(AuthError) -> TokenAuth.Token in throw AuthError.failedToRefreshToken },
             onSessionLost: { await sessionLostCalled.set() }
         )
 
@@ -301,10 +305,8 @@ struct TokenAuthSessionLostTests {
         do {
             try await auth.authenticate(request: &request)
             Issue.record("Should have thrown")
-        } catch let error as AuthError {
-            #expect(error == .failedToRefreshToken)
         } catch {
-            Issue.record("Wrong error type")
+            #expect(error == .failedToRefreshToken)
         }
 
         #expect(await sessionLostCalled.value == false)
@@ -312,7 +314,7 @@ struct TokenAuthSessionLostTests {
 
     @Test("state becomes empty after invalidCredentials")
     func stateBecomesEmptyAfterInvalidCredentials() async throws {
-        let auth = TokenAuth(name: "Test") {
+        let auth = TokenAuth(name: "Test") { () async throws(AuthError) -> TokenAuth.Token in
             throw AuthError.invalidCredentials
         }
 
@@ -327,10 +329,8 @@ struct TokenAuthSessionLostTests {
         do {
             try await auth.authenticate(request: &request2)
             Issue.record("Should have thrown")
-        } catch let error as AuthError {
-            #expect(error == .missingToken)
         } catch {
-            Issue.record("Wrong error type")
+            #expect(error == .missingToken)
         }
     }
 }
@@ -379,14 +379,14 @@ struct TokenAuthCustomApplyTests {
 @Suite("TokenAuth Error Handling")
 struct TokenAuthErrorHandlingTests {
 
-    @Test("state becomes invalid after generic refresh error")
+    @Test("state becomes invalid after a failed refresh")
     func stateBecomesInvalidAfterError() async throws {
         let refreshCount = AtomicCounter()
 
-        let auth = TokenAuth(name: "Test") {
+        let auth = TokenAuth(name: "Test") { () async throws(AuthError) -> TokenAuth.Token in
             let count = await refreshCount.increment()
             if count == 1 {
-                throw NSError(domain: "Test", code: 1)
+                throw AuthError.failedToRefreshToken
             }
             return .init(value: "recovered", expiresIn: 3600)
         }
@@ -418,7 +418,7 @@ struct TokenAuthWaitStateTests {
 
     @Test("multiple waiters are all resumed when token set")
     func multipleWaitersResumed() async throws {
-        let auth = TokenAuth(name: "Test") {
+        let auth = TokenAuth(name: "Test") { () async throws(AuthError) -> TokenAuth.Token in
             throw AuthError.failedToRefreshToken
         }
 
@@ -446,7 +446,7 @@ struct TokenAuthWaitStateTests {
 
     @Test("clear unblocks waiters with error")
     func clearUnblocksWaiters() async throws {
-        let auth = TokenAuth(name: "Test") {
+        let auth = TokenAuth(name: "Test") { () async throws(AuthError) -> TokenAuth.Token in
             throw AuthError.failedToRefreshToken
         }
 
@@ -463,9 +463,10 @@ struct TokenAuthWaitStateTests {
             try await task.value
             Issue.record("Should have thrown")
         } catch let error as AuthError {
-            #expect(error == .missingToken)
-        } catch {
-            // Could also be cancelled
+            // Clearing an in-flight wait cancels it, so `.cancelled` is the expected
+            // outcome. `.missingToken` is also acceptable if the waiter re-resolves
+            // against the now-empty state before observing the cancellation.
+            #expect(error == .cancelled || error == .missingToken)
         }
     }
 }

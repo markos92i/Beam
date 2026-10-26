@@ -10,9 +10,7 @@ import SwiftSyntaxMacros
 
 // MARK: - Marker Macro Base
 
-/// A no-op peer macro used as a compile-time marker for HTTP route annotations.
-/// All route macros (@Get, @Post, etc.) share this identical expansion behavior —
-/// they produce no peers; their metadata is consumed by @API at the protocol level.
+/// Route macros expand to nothing; `@API` reads them.
 protocol MarkerMacro: PeerMacro {}
 
 extension MarkerMacro {
@@ -32,6 +30,5 @@ public struct DeleteMacro: MarkerMacro {}
 public struct PatchMacro: MarkerMacro {}
 public struct HeadMacro: MarkerMacro {}
 public struct OptionsMacro: MarkerMacro {}
-public struct ConnectMacro: MarkerMacro {}
 public struct TraceMacro: MarkerMacro {}
 public struct SocketMacro: MarkerMacro {}

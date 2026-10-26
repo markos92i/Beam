@@ -7,6 +7,7 @@
 
 import Foundation
 import os
+import Synchronization
 
 // MARK: - LogLevel
 
@@ -22,13 +23,13 @@ public enum LogLevel: Int, Sendable, Comparable {
         lhs.rawValue < rhs.rawValue
     }
 
-    /// Maps the semantic level to the corresponding `OSLogType`.
+    /// Same mapping as `os.Logger`: `.fault` is for process bugs, not failed calls.
     var osLogType: OSLogType {
         switch self {
         case .debug:   .debug
         case .info:    .info
         case .warning: .error
-        case .error:   .fault
+        case .error:   .error
         case .off:     .info
         }
     }
@@ -41,25 +42,46 @@ public struct BeamLogger: Sendable {
 
     // MARK: - Global Configuration
 
-    /// Enables/disables all Beam logs globally.
-    public nonisolated(unsafe) static var enabled = true
+    #if DEBUG
+    private static let defaultLevel = LogLevel.debug
+    private static let defaultVerbose = true
+    #else
+    private static let defaultLevel = LogLevel.warning
+    private static let defaultVerbose = false
+    #endif
 
-    /// Global minimum level. Used as fallback when no instance level is set.
-    public nonisolated(unsafe) static var level: LogLevel = .debug
+    // Atomic: read from any thread on every log call, writable at runtime.
+    private static let _level = Atomic<Int>(defaultLevel.rawValue)
+    private static let _verbose = Atomic<Bool>(defaultVerbose)
+    private static let _maxBodySize = Atomic<Int>(2000)
 
-    /// When true, prints full request and response bodies to console.
-    public nonisolated(unsafe) static var verbose = true
+    /// Global minimum level for APIs without `@API(logLevel:)`; `.off` silences all of Beam.
+    public static var level: LogLevel {
+        get { LogLevel(rawValue: _level.load(ordering: .relaxed)) ?? defaultLevel }
+        set { _level.store(newValue.rawValue, ordering: .relaxed) }
+    }
 
-    /// Maximum body size (in characters) to print. Default 2000.
-    public nonisolated(unsafe) static var maxBodySize = 2000
+    /// Logs full bodies. Error responses (status ≥ 400) always include theirs.
+    public static var verbose: Bool {
+        get { _verbose.load(ordering: .relaxed) }
+        set { _verbose.store(newValue, ordering: .relaxed) }
+    }
+
+    /// Maximum body characters printed.
+    public static var maxBodySize: Int {
+        get { _maxBodySize.load(ordering: .relaxed) }
+        set { _maxBodySize.store(newValue, ordering: .relaxed) }
+    }
 
     // MARK: - Instance Configuration
 
-    /// Instance-level minimum. Falls back to `BeamLogger.level` when nil.
     private let instanceLevel: LogLevel?
 
-    /// Effective level: instance if set, global otherwise.
-    private var effectiveLevel: LogLevel { instanceLevel ?? Self.level }
+    var effectiveLevel: LogLevel { instanceLevel ?? Self.level }
+
+    func logs(_ level: LogLevel, global: LogLevel = BeamLogger.level) -> Bool {
+        global != .off && (instanceLevel ?? global) <= level
+    }
 
     init(level: LogLevel? = nil) {
         self.instanceLevel = level
@@ -71,52 +93,58 @@ public struct BeamLogger: Sendable {
 
     // MARK: - Categorized Loggers
 
+    private static let httpLogger = os.Logger(subsystem: subsystem, category: "http")
+    private static let websocketLogger = os.Logger(subsystem: subsystem, category: "websocket")
+    private static let authLogger = os.Logger(subsystem: subsystem, category: "auth")
+    private static let errorLogger = os.Logger(subsystem: subsystem, category: "error")
+
     private func logger(for category: LogEvent.LogCategory) -> os.Logger {
         switch category {
-        case .http:      os.Logger(subsystem: Self.subsystem, category: "http")
-        case .websocket: os.Logger(subsystem: Self.subsystem, category: "websocket")
-        case .auth:      os.Logger(subsystem: Self.subsystem, category: "auth")
-        case .error:     os.Logger(subsystem: Self.subsystem, category: "error")
+        case .http:      Self.httpLogger
+        case .websocket: Self.websocketLogger
+        case .auth:      Self.authLogger
+        case .error:     Self.errorLogger
         }
     }
 
     // MARK: - Signposts
 
-    private let signposter = OSSignposter(subsystem: BeamLogger.subsystem, category: "http")
+    private static let signposter = OSSignposter(subsystem: subsystem, category: "http")
 
     // MARK: - Unified Log Entry Point
 
-    /// Logs a structured event. Guard, format, and emit happen in one place.
     func log(_ event: LogEvent) {
-        guard Self.enabled, effectiveLevel <= event.meta.level else { return }
+        guard logs(event.meta.level) else { return }
 
-        let config = RenderConfig(verbose: Self.verbose, maxBodySize: Self.maxBodySize)
-        let output = event.rendered(in: config)
+        let output = event.rendered(in: .current)
         emit(output, to: logger(for: event.meta.category), level: event.meta.level.osLogType)
     }
 
     // MARK: - Signpost API
 
-    /// Begins a signpost interval for an HTTP request.
+    /// Own signpost ID per interval: concurrent requests can't share `.exclusive`.
     func beginRequest(id: String, method: String, path: String) -> OSSignpostIntervalState {
-        signposter.beginInterval("request", id: .exclusive, "\(method, privacy: .public) \(path, privacy: .public) [\(id, privacy: .public)]")
+        let signpostID = Self.signposter.makeSignpostID()
+        // The path may carry identifiers: private outside Debug.
+        #if DEBUG
+        return Self.signposter.beginInterval("request", id: signpostID, "\(method, privacy: .public) \(path, privacy: .public) [\(id, privacy: .public)]")
+        #else
+        return Self.signposter.beginInterval("request", id: signpostID, "\(method, privacy: .public) \(path, privacy: .private) [\(id, privacy: .public)]")
+        #endif
     }
 
-    /// Ends the signpost interval for an HTTP request.
     func endRequest(_ state: OSSignpostIntervalState, status: Int) {
-        signposter.endInterval("request", state, "\(status, privacy: .public)")
+        Self.signposter.endInterval("request", state, "\(status, privacy: .public)")
     }
 
     // MARK: - Emit
 
-    /// Sends the rendered output to the os.Logger at the given level.
-    private func emit(_ output: String, to logger: os.Logger, level: OSLogType = .info) {
-        switch level {
-        case .debug: logger.debug("\(output, privacy: .public)")
-        case .info: logger.info("\(output, privacy: .public)")
-        case .error: logger.warning("\(output, privacy: .public)")
-        case .fault: logger.fault("\(output, privacy: .public)")
-        default: logger.info("\(output, privacy: .public)")
-        }
+    /// Output may hold personal data: public only in Debug. `privacy:` must be a literal.
+    private func emit(_ output: String, to logger: os.Logger, level: OSLogType) {
+        #if DEBUG
+        logger.log(level: level, "\(output, privacy: .public)")
+        #else
+        logger.log(level: level, "\(output, privacy: .private)")
+        #endif
     }
 }

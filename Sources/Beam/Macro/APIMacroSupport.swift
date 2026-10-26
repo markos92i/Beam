@@ -9,103 +9,71 @@ import Foundation
 
 // MARK: - Main Macro
 
-/// Transforms a protocol into a fully-functional API client struct.
-///
-/// Parameter roles are detected by **external label convention**:
-/// - `body` (external label) → JSON-encoded request body
-/// - `query` (external label) → named query parameter (key = internal name)
-/// - `header` (external label) → dynamic HTTP header (key = internal name)
-/// - `url` (external label) + type `URL` → absolute URL override (bypasses host + base + path)
-/// - Type `[URLQueryItem]` → query items array passed directly
-/// - Matches `{name}` in path → path parameter (string-interpolated)
-///
-/// ## Escaping Conventions
-///
-/// All role detection is driven by the **external label**. Use Swift's dual naming
-/// (external/internal) to escape collisions with domain names:
-///
-/// ```swift
-/// // "body" as HTTP body:
-/// func create(body request: CreateRequest) async throws(APIError<E>) -> Item
-///
-/// // Domain field named "body" — escape with a different external label:
-/// func update(_ body: BodyModel) async throws(APIError<E>) -> Item
-///
-/// // Absolute URL override:
-/// func download(url: URL) async throws(APIError<E>) -> URL
-///
-/// // A URL param that is NOT an override — escape:
-/// func process(target url: URL) async throws(APIError<E>) -> Result
-/// ```
-///
-/// ## Absolute URL
-///
-/// When a parameter has external label `url` and type `URL`, the generated code
-/// uses it as the full request target, ignoring the configured `host` and `base`.
-/// Auth, headers, interceptors, and retry still apply. This is analogous to
-/// Retrofit's `@Url` annotation.
-///
-/// > Note: For upload tasks (`task: .upload`), `url: URL` retains its existing
-/// > meaning of "local file source" and does NOT trigger the absolute URL override.
-@attached(peer, names: suffixed(Client), suffixed(Mock))
+/// Generates `<Protocol>Client` from the protocol's routes. Parameter roles, by external label:
+/// - `body`: request body (`Data` as is, `String` as text, ``HTTPBody``, else JSON).
+/// - `query name`: query item keyed by `name`; arrays repeat the key.
+/// - `header name`: header keyed by `name`.
+/// - `url`: absolute URL override; in `task: .upload`, the local file to upload.
+/// - `resumeFrom`: resume data of an interrupted upload or download.
+/// - `{name}` placeholder label: fills it; unmatched placeholders read ``APIValues``.
+/// - Unlabeled: `[URLQueryItem]` only.
+@attached(peer, names: suffixed(Client))
 public macro API(
     host: String,
     base: String = "",
     headers: [String: String] = [:],
-    session: Any? = nil,
-    auth: Any? = nil,
-    crash: Any? = nil,
-    mapper: Any? = nil,
-    mock: Bool = false
+    session: (any SessionProtocol)? = nil,
+    background: Session<Background>? = nil,
+    auth: (any AuthProtocol)? = nil,
+    monitors: [any Monitor] = [],
+    config: RequestConfig = .standard,
+    interceptors: [any Interceptor] = [],
+    logLevel: LogLevel? = nil
 ) = #externalMacro(module: "BeamMacros", type: "APIMacro")
 
 // MARK: - HTTP Method Markers
 
-/// GET endpoint. Path params use `{name}` syntax.
+// `@API` never reads these defaults; `retry` is non-optional so `.none` means `RetryPolicy.none`.
+
+/// GET endpoint.
 @attached(peer)
-public macro Get(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "GetMacro")
+public macro Get(_ path: String = "", task: _TaskKind = .data, query: [String: String] = [:], headers: [String: String] = [:], timeout: Duration? = nil, retry: RetryPolicy = .standard, auth: AuthPolicy? = nil, json: JSONCoding? = nil) = #externalMacro(module: "BeamMacros", type: "GetMacro")
 
 /// POST endpoint.
 @attached(peer)
-public macro Post(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "PostMacro")
+public macro Post(_ path: String = "", task: _TaskKind = .data, query: [String: String] = [:], headers: [String: String] = [:], timeout: Duration? = nil, retry: RetryPolicy = .standard, auth: AuthPolicy? = nil, json: JSONCoding? = nil) = #externalMacro(module: "BeamMacros", type: "PostMacro")
 
 /// PUT endpoint.
 @attached(peer)
-public macro Put(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "PutMacro")
+public macro Put(_ path: String = "", task: _TaskKind = .data, query: [String: String] = [:], headers: [String: String] = [:], timeout: Duration? = nil, retry: RetryPolicy = .standard, auth: AuthPolicy? = nil, json: JSONCoding? = nil) = #externalMacro(module: "BeamMacros", type: "PutMacro")
 
 /// DELETE endpoint.
 @attached(peer)
-public macro Delete(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "DeleteMacro")
+public macro Delete(_ path: String = "", task: _TaskKind = .data, query: [String: String] = [:], headers: [String: String] = [:], timeout: Duration? = nil, retry: RetryPolicy = .standard, auth: AuthPolicy? = nil, json: JSONCoding? = nil) = #externalMacro(module: "BeamMacros", type: "DeleteMacro")
 
 /// PATCH endpoint.
 @attached(peer)
-public macro Patch(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "PatchMacro")
+public macro Patch(_ path: String = "", task: _TaskKind = .data, query: [String: String] = [:], headers: [String: String] = [:], timeout: Duration? = nil, retry: RetryPolicy = .standard, auth: AuthPolicy? = nil, json: JSONCoding? = nil) = #externalMacro(module: "BeamMacros", type: "PatchMacro")
 
 /// HEAD endpoint.
 @attached(peer)
-public macro Head(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "HeadMacro")
+public macro Head(_ path: String = "", task: _TaskKind = .data, query: [String: String] = [:], headers: [String: String] = [:], timeout: Duration? = nil, retry: RetryPolicy = .standard, auth: AuthPolicy? = nil, json: JSONCoding? = nil) = #externalMacro(module: "BeamMacros", type: "HeadMacro")
 
 /// OPTIONS endpoint.
 @attached(peer)
-public macro Options(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "OptionsMacro")
-
-/// CONNECT endpoint.
-@attached(peer)
-public macro Connect(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "ConnectMacro")
+public macro Options(_ path: String = "", task: _TaskKind = .data, query: [String: String] = [:], headers: [String: String] = [:], timeout: Duration? = nil, retry: RetryPolicy = .standard, auth: AuthPolicy? = nil, json: JSONCoding? = nil) = #externalMacro(module: "BeamMacros", type: "OptionsMacro")
 
 /// TRACE endpoint.
 @attached(peer)
-public macro Trace(_ path: String = "", task: _TaskKind = .data, headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "TraceMacro")
+public macro Trace(_ path: String = "", task: _TaskKind = .data, query: [String: String] = [:], headers: [String: String] = [:], timeout: Duration? = nil, retry: RetryPolicy = .standard, auth: AuthPolicy? = nil, json: JSONCoding? = nil) = #externalMacro(module: "BeamMacros", type: "TraceMacro")
 
-/// WebSocket endpoint. Opens a persistent bidirectional connection (GET + upgrade).
+/// WebSocket endpoint (GET + upgrade).
 @attached(peer)
-public macro Socket(_ path: String = "", headers: [String: String] = [:], timeout: TimeInterval? = nil, retry: RetryPolicy? = nil, auth: AuthPolicy? = nil, mapper: (any MapperProtocol)? = nil) = #externalMacro(module: "BeamMacros", type: "SocketMacro")
+public macro Socket(_ path: String = "", query: [String: String] = [:], headers: [String: String] = [:], timeout: Duration? = nil, retry: RetryPolicy = .standard, auth: AuthPolicy? = nil, json: JSONCoding? = nil) = #externalMacro(module: "BeamMacros", type: "SocketMacro")
 
 // MARK: - Supporting Types
 
-/// Task kind marker for route macros.
-///
-/// - Important: Internal to the `@API` macro system. Do not use directly.
+/// Used by @API.
 public enum _TaskKind: Sendable {
     case data
     case upload
@@ -113,44 +81,172 @@ public enum _TaskKind: Sendable {
     case bytes
 }
 
-// MARK: - Runtime Configuration Container
+// MARK: - API Configuration
 
-/// Shared configuration container generated by `@API`.
-///
-/// - Important: Internal to the macro system. Do not instantiate manually.
-public struct _APIConfiguration: Sendable {
-    public let host: String
-    public let base: String
-    public let headers: [String: String]
-    public let session: any SessionProtocol
+/// What every route of an API shares; `@API` builds one, an ``Endpoint`` used by hand takes one.
+/// `host`, `base` and `headers` are re-evaluated on every access, from any thread.
+public struct APIConfiguration: Sendable {
+    public private(set) var session: any SessionProtocol
+    public let background: Session<Background>?
     public let auth: (any AuthProtocol)?
-    public let crash: (any CrashProtocol)?
-    public let mapper: any MapperProtocol
+    public let monitors: [any Monitor]
     public let config: RequestConfig
-    public let interceptors: [any RequestInterceptor]
+    public let interceptors: [any Interceptor]
     public let logLevel: LogLevel?
 
+    private let hostProvider: @Sendable () -> String
+    private let baseProvider: @Sendable () -> String
+    private let headersProvider: @Sendable () -> [String: String]
+
+    public var host: String { hostProvider() }
+    public var base: String { baseProvider() }
+    public var headers: [String: String] { headersProvider() }
+
     public init(
-        host: String,
-        base: String,
-        headers: [String: String] = [:],
+        host: @autoclosure @escaping @Sendable () -> String,
+        base: @autoclosure @escaping @Sendable () -> String = "",
+        headers: @autoclosure @escaping @Sendable () -> [String: String] = [:],
         session: any SessionProtocol = Session(),
+        background: Session<Background>? = nil,
         auth: (any AuthProtocol)? = nil,
-        crash: (any CrashProtocol)? = nil,
-        mapper: any MapperProtocol = Mapper(),
+        monitors: [any Monitor] = [],
         config: RequestConfig = .standard,
-        interceptors: [any RequestInterceptor] = [],
+        interceptors: [any Interceptor] = [],
         logLevel: LogLevel? = nil
     ) {
-        self.host = host
-        self.base = base
-        self.headers = headers
+        self.hostProvider = host
+        self.baseProvider = base
+        self.headersProvider = headers
         self.session = session
+        self.background = background
         self.auth = auth
-        self.crash = crash
-        self.mapper = mapper
+        self.monitors = monitors
         self.config = config
         self.interceptors = interceptors
         self.logLevel = logLevel
+    }
+
+    /// A copy that uses `session`, or `self` when `session` is `nil`.
+    public func replacing(session: (any SessionProtocol)?) -> APIConfiguration {
+        guard let session else { return self }
+        var copy = self
+        copy.session = session
+        return copy
+    }
+
+    /// A request for a route of this API; `values` fill the `{name}` placeholders of `path`.
+    public func request(
+        _ method: HTTPMethod,
+        _ path: String,
+        values: [String: String] = [:],
+        query: [URLQueryItem] = [],
+        headers: [String: String]? = nil,
+        body: HTTPBody? = nil
+    ) -> APIRequest {
+        _request(method, path, values: values.mapValues(_Route.Value.value), query: query, headers: headers, body: body)
+    }
+
+    /// A request to an absolute URL, ignoring `host` and `base`.
+    /// - Parameter route: Name that groups its error reports, e.g. `"DocumentsAPI.download"`.
+    public func request(
+        _ method: HTTPMethod,
+        url: URL,
+        route: String,
+        headers: [String: String]? = nil,
+        body: HTTPBody? = nil
+    ) -> APIRequest {
+        APIRequest(method: method, host: url.absoluteString, path: "", pathTemplate: route, headers: headers ?? self.headers, body: body)
+    }
+
+    /// Used by @API.
+    public func _request(
+        _ method: HTTPMethod,
+        _ path: String,
+        values: [String: _Route.Value] = [:],
+        routeQuery: KeyValuePairs<String, _Route.Value> = [:],
+        query: [URLQueryItem] = [],
+        headers: [String: String]? = nil,
+        body: HTTPBody? = nil
+    ) -> APIRequest {
+        let headers = headers ?? self.headers
+        let base = base
+        let resolved = RoutePath(base: base, template: path, values: values)
+        var missing = resolved.missing
+
+        var items: [URLQueryItem] = []
+        for (name, value) in routeQuery {
+            switch value {
+            case .value(let text): items.append(URLQueryItem(name: name, value: text))
+            case .omitted: break
+            case .missing(let valueName): missing = missing ?? valueName
+            }
+        }
+
+        var request = APIRequest(
+            method: method,
+            host: host,
+            path: resolved.path,
+            pathTemplate: base + path,
+            query: items + query,
+            headers: headers,
+            body: body
+        )
+        request.percentEncodedPath = resolved.percentEncodedPath
+        request.missingValue = missing
+        return request
+    }
+}
+
+// MARK: - Route Path
+
+struct RoutePath {
+    let path: String
+    /// Each placeholder value is encoded as one segment, so a `/` in it stays escaped.
+    let percentEncodedPath: String
+    let missing: String?
+
+    private static let pathAllowed = CharacterSet.urlPathAllowed
+    private static let segmentAllowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+
+    init(base: String, template: String, values: [String: _Route.Value]) {
+        var path = base
+        var encoded = Self.encode(base, allowing: Self.pathAllowed)
+        var missing: String?
+
+        var rest = template[...]
+        while let open = rest.firstIndex(of: "{") {
+            let literal = String(rest[..<open])
+            path += literal
+            encoded += Self.encode(literal, allowing: Self.pathAllowed)
+
+            guard let close = rest[open...].firstIndex(of: "}") else {
+                rest = rest[open...]
+                break
+            }
+            let name = String(rest[rest.index(after: open)..<close])
+            let placeholder = String(rest[open...close])
+
+            if case .value(let text) = values[name] {
+                path += text
+                encoded += Self.encode(text, allowing: Self.segmentAllowed)
+            } else {
+                // Unresolved placeholders are kept as written.
+                if case .missing(let valueName) = values[name] { missing = missing ?? valueName }
+                if case .omitted = values[name] { missing = missing ?? name }
+                path += placeholder
+                encoded += Self.encode(placeholder, allowing: Self.pathAllowed)
+            }
+            rest = rest[rest.index(after: close)...]
+        }
+        path += rest
+        encoded += Self.encode(String(rest), allowing: Self.pathAllowed)
+
+        self.path = path
+        self.percentEncodedPath = encoded
+        self.missing = missing
+    }
+
+    private static func encode(_ text: String, allowing allowed: CharacterSet) -> String {
+        text.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
     }
 }

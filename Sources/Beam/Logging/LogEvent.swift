@@ -11,7 +11,7 @@ enum LogEvent: Sendable {
     // MARK: - HTTP
     case request(id: String, method: String, url: URL, headers: [String: String]?, body: Data?)
     case response(id: String, status: Int, headers: [String: String], body: Body, start: Date)
-    case retry(id: String, attempt: Int, max: Int, delay: TimeInterval)
+    case retry(id: String, attempt: Int, max: Int, delay: Duration)
     case error(id: String, icon: String, name: String, detail: String, attempt: Int)
 
     // MARK: - WebSocket
@@ -20,22 +20,26 @@ enum LogEvent: Sendable {
     case wsReceive(id: String, type: String, body: Body)
     case wsClose(id: String, code: Int, reason: String?)
     case wsPing(id: String)
-    case wsReconnect(id: String, attempt: Int, max: Int, delay: TimeInterval)
+    case wsReconnect(id: String, attempt: Int, max: Int, delay: Duration)
 
     // MARK: - Auth
-    case auth(type: String, name: String, detail: String)
+    case auth(type: String, name: String, detail: String, level: LogLevel = .info)
 
-    // MARK: - Interceptor
-    case interceptor(id: String, typeName: String)
+    case undecodedErrorBody(id: String, type: String, detail: String)
+    /// Coding failure after the call succeeded (stream element, sent WebSocket message).
+    case codingFailed(id: String, what: String, detail: String)
+
+    // MARK: - Background
+    /// A background transfer that finished with nobody awaiting it.
+    case backgroundFinished(id: String, method: String, path: String, status: Int?, failure: String?)
 }
 
 extension LogEvent {
     enum Body: Sendable {
         case data(Data)
-        case file(String)
+        case file(name: String?, bytes: Int?)
         case none
 
-        /// Wraps optional raw data into a `Body`.
         static func from(_ data: Data?) -> Body {
             if let data, !data.isEmpty { .data(data) } else { .none }
         }
@@ -46,30 +50,27 @@ extension LogEvent {
     struct EventMeta: Sendable {
         let level: LogLevel
         let category: LogCategory
-        let style: LogStyle
     }
 
     var meta: EventMeta {
         switch self {
-        case .request:      .init(level: .info, category: .http, style: .none)
-        case .response(_, let status, _, _, _): .init(level: status >= 500 ? .warning : .info, category: .http, style: .none)
-        case .retry:        .init(level: .info, category: .http, style: .none)
-        case .error:        .init(level: .error, category: .error, style: .none)
-        case .wsOpen:       .init(level: .info, category: .websocket, style: .none)
-        case .wsSend:       .init(level: .debug, category: .websocket, style: .none)
-        case .wsReceive:    .init(level: .debug, category: .websocket, style: .none)
-        case .wsClose:      .init(level: .info, category: .websocket, style: .none)
-        case .wsPing:       .init(level: .debug, category: .websocket, style: .none)
-        case .wsReconnect:  .init(level: .warning, category: .websocket, style: .none)
-        case .auth(_, _, let detail): .init(level: detail == "rejected" ? .debug : .info, category: .auth, style: .none)
-        case .interceptor:  .init(level: .debug, category: .http, style: .none)
+        case .request:      .init(level: .info, category: .http)
+        case .response(_, let status, _, _, _): .init(level: status >= 500 ? .warning : .info, category: .http)
+        case .retry:        .init(level: .info, category: .http)
+        case .error:        .init(level: .error, category: .error)
+        case .wsOpen:       .init(level: .info, category: .websocket)
+        case .wsSend:       .init(level: .debug, category: .websocket)
+        case .wsReceive:    .init(level: .debug, category: .websocket)
+        case .wsClose:      .init(level: .info, category: .websocket)
+        case .wsPing:       .init(level: .debug, category: .websocket)
+        case .wsReconnect:  .init(level: .warning, category: .websocket)
+        case .auth(_, _, _, let level): .init(level: level, category: .auth)
+        case .undecodedErrorBody: .init(level: .warning, category: .http)
+        case .codingFailed: .init(level: .error, category: .error)
+        case .backgroundFinished(_, _, _, let status, let failure):
+            .init(level: failure == nil && (200..<300).contains(status ?? 0) ? .info : .warning, category: .http)
         }
     }
-
-    // MARK: - Shortcuts
-    var level: LogLevel { meta.level }
-    var category: LogCategory { meta.category }
-    var style: LogStyle { meta.style }
 }
 
 // MARK: - Category
@@ -82,7 +83,9 @@ extension LogEvent {
 // MARK: - Rendering
 extension LogEvent {
     func rendered(in config: RenderConfig) -> String {
-        lines(in: config).styled(meta.style).joined(separator: "\n")
+        var lines = lines(in: config)
+        if !lines.isEmpty { lines[0] = LogColumns.align(lines[0]) }
+        return lines.joined(separator: "\n")
     }
 
     @LogBuilder
@@ -90,51 +93,64 @@ extension LogEvent {
         switch self {
         // MARK: - HTTP
         case .request(let id, let method, let url, let headers, let body):
-            "􀁶 \(id)    􀋧 \(method)    \(url.protocolLabel)    \(url.hostLabel)    \(url.pathLabel)    \(url.queryLabel ?? "")"
+            "􀁶 \(id)\t􀋧 \(method)\t\(url.protocolLabel)\t\(url.hostLabel)\t\(url.pathLabel)\t\(url.queryLabel ?? "")"
             "􁒠 \(Self.headerDescription(headers))"
             "􁒡 \(Self.bodyDescription(.from(body), verbose: config.verbose, max: config.maxBodySize))"
             
         case .response(let id, let status, let headers, let body, let start):
-            "􀁸 \(id)    \(status.statusIcon) \(status)    􀐫 \(start.elapsed)"
+            "􀁸 \(id)\t\(status.statusIcon) \(status)\t􀐫 \(start.elapsed)"
             "􁒠 \(Self.headerDescription(headers))"
             "􁒡 \(Self.bodyDescription(body, verbose: config.verbose || status >= 400, max: config.verbose ? .max : config.maxBodySize))"
 
         case .retry(let id, let attempt, let max, let delay):
-            "􀅈 \(id)    retry \(attempt)/\(max)    delay: \(delay.formatted)"
+            "􀅈 \(id)\tretry \(attempt)/\(max)\tdelay: \(delay.formatted)"
 
         case .error(let id, let icon, let name, let detail, let attempt):
-            "􀇾 \(id)    \(icon) \(name)    attempt \(attempt)"
+            "􀇾 \(id)\t\(icon) \(name)\tattempt \(attempt)"
+            "􀺾 \(detail)"
+
+        case .undecodedErrorBody(let id, let type, let detail):
+            "􀇿 \(id)\terror body is not \(type): the error has no body"
+            "􀺾 \(detail)"
+
+        case .codingFailed(let id, let what, let detail):
+            "􀇾 \(id)\t\(what)"
             "􀺾 \(detail)"
 
         // MARK: - WebSocket
         case .wsOpen(let id, let url, let headers):
-            "􀋧 \(id)    \(url.protocolLabel)    \(url.hostLabel)    \(url.pathLabel)    \(url.queryLabel ?? "")"
+            "􀋧 \(id)\t\(url.protocolLabel)\t\(url.hostLabel)\t\(url.pathLabel)\t\(url.queryLabel ?? "")"
             "􁒠 \(Self.headerDescription(headers))"
 
         case .wsSend(let id, let type, let body):
-            "􀁶 \(id)    \(type)"
+            "􀁶 \(id)\t\(type)"
             "􁒡 \(Self.bodyDescription(body, verbose: config.verbose, max: config.maxBodySize))"
 
         case .wsReceive(let id, let type, let body):
-            "􀁸 \(id)    \(type)"
+            "􀁸 \(id)\t\(type)"
             "􁒡 \(Self.bodyDescription(body, verbose: config.verbose, max: config.maxBodySize))"
 
         case .wsClose(let id, let code, let reason):
-            "􀁠 \(id)    code: \(code)\(reason.map { "    \(String($0.prefix(config.maxBodySize)))" } ?? "")"
+            "􀁠 \(id)\tcode: \(code)\(reason.map { "\t\(String($0.prefix(config.maxBodySize)))" } ?? "")"
 
         case .wsPing(let id):
-            "􀒙 \(id)    pong"
+            "􀒙 \(id)\tpong"
 
         case .wsReconnect(let id, let attempt, let max, let delay):
-            "􀅈 \(id)    reconnect \(attempt)/\(max)    delay: \(delay.formatted)"
+            "􀅈 \(id)\treconnect \(attempt)/\(max)\tdelay: \(delay.formatted)"
 
         // MARK: - Auth
-        case .auth(let type, let name, let detail):
+        case .auth(let type, let name, let detail, _):
             "􁠱 \(type) [\(name)] \(detail)"
 
-        // MARK: - Interceptor
-        case .interceptor(let id, let typeName):
-            "􀌈 \(id)    \(typeName)"
+        // MARK: - Background
+        case .backgroundFinished(let id, let method, let path, let status, let failure):
+            "􀇂 \(id)\tbackground\t􀋧 \(method)\t􀈕 \(path)"
+            if let failure {
+                "􀺾 \(failure)"
+            } else if let status {
+                "\(status.statusIcon) \(status)"
+            }
         }
     }
 
@@ -144,7 +160,7 @@ extension LogEvent {
         let known = headers.compactMap { key, value -> String? in
             switch key {
             case "Authorization": "􁠱 auth"
-            case "Content-Type": "\(ContentType(rawHeader: value).icon) \(ContentType(rawHeader: value).label)"
+            case "Content-Type": ContentType(rawHeader: value).logLabel
             case "Cache-Control": "􀫦 cache"
             default: nil
             }
@@ -154,8 +170,6 @@ extension LogEvent {
         return parts.joined(separator: ", ")
     }
 
-    /// Returns body content as a formatted string.
-    /// Starts with " " for inline (compact/file) or "\n" for multiline (verbose).
     private static func bodyDescription(_ body: Body, verbose: Bool, max: Int) -> String {
         switch body {
         case .data(let data) where !data.isEmpty:
@@ -167,8 +181,8 @@ extension LogEvent {
                 }
             }
             return "\(data.count.byteFormatted)"
-        case .file(let filename):
-            return "􀈷 \(filename)"
+        case .file(let name, let bytes):
+            return ["􀈷 \(name ?? "file")", bytes?.byteFormatted].compactMap { $0 }.joined(separator: "    ")
         default:
             return "􀓔"
         }
@@ -177,3 +191,24 @@ extension LogEvent {
 }
 
 
+
+// MARK: - Content Type
+
+private extension ContentType {
+    var logLabel: String {
+        switch self {
+        case .json: "􀡅 json"
+        case .image: "􀏅 \(mediaType)"
+        case .video: "􀜤 \(mediaType)"
+        case .audio: "􀑪 \(mediaType)"
+        case "multipart/*": "􀏭 multipart"
+        case .data: "􀤧 stream"
+        case .text: "􀅒 text"
+        case .xml, "text/xml": "􀙚 xml"
+        case .html: "􀙚 html"
+        case .pdf: "􀈷 pdf"
+        case .urlEncoded: "􀒶 form"
+        default: "􀠩 \(value)"
+        }
+    }
+}

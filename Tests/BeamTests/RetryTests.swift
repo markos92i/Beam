@@ -14,9 +14,9 @@ struct RetryTests {
     func retryOnServerError() async throws {
         let counter = AtomicCounter()
         let mockBody = ResponseMock(id: "retry-ok", value: 42)
-        let expectedData = try JSONEncoder().encode(mockBody)
+        let expectedData = json(mockBody)
 
-        let session = MockSession({ request in
+        let session = MockSession({ (request) throws(URLError) in
             let attempt = await counter.increment()
             if attempt < 3 {
                 let response = HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
@@ -40,7 +40,7 @@ struct RetryTests {
     func noRetryOnTransportError() async throws {
         let counter = AtomicCounter()
 
-        let session = MockSession({ request in
+        let session = MockSession({ (request) throws(URLError) in
             await counter.increment()
             let response = HTTPURLResponse(url: request.url!, statusCode: 400, httpVersion: nil, headerFields: nil)!
             return (Data(), response)
@@ -64,9 +64,9 @@ struct RetryTests {
     func retryOnTimeout() async throws {
         let counter = AtomicCounter()
         let mockBody = ResponseMock(id: "timeout-ok", value: 99)
-        let expectedData = try JSONEncoder().encode(mockBody)
+        let expectedData = json(mockBody)
 
-        let session = MockSession({ request in
+        let session = MockSession({ (request) throws(URLError) in
             let attempt = await counter.increment()
             if attempt == 1 {
                 throw URLError(.timedOut)
@@ -90,7 +90,7 @@ struct RetryTests {
     func retryExhausted() async throws {
         let counter = AtomicCounter()
 
-        let session = MockSession({ request in
+        let session = MockSession({ (request) throws(URLError) in
             await counter.increment()
             let response = HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: nil)!
             return (Data(), response)
@@ -116,9 +116,9 @@ struct RetryTests {
         let counter = AtomicCounter()
         let flag = AtomicFlag()
         let mockBody = ResponseMock(id: "auth-ok", value: 1)
-        let expectedData = try JSONEncoder().encode(mockBody)
+        let expectedData = json(mockBody)
 
-        let session = MockSession({ request in
+        let session = MockSession({ (request) throws(URLError) in
             let attempt = await counter.increment()
             if attempt == 1 {
                 let response = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
@@ -141,5 +141,40 @@ struct RetryTests {
         #expect(result.id == "auth-ok")
         #expect(await flag.value)
         #expect(await counter.value == 2)
+    }
+
+    @Test
+    func cancellingDuringBackoffStopsRetrying() async throws {
+        let counter = AtomicCounter()
+
+        let session = MockSession({ (request) throws(URLError) in
+            await counter.increment()
+            let response = HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
+            return (Data(), response)
+        })
+
+        // A long backoff: before the fix, cancellation was swallowed and the retry ran after it.
+        let endpoint = Endpoint<ResponseMock, Void>(
+            session: session,
+            config: RequestConfig(retry: .linear(delay: .seconds(30), maxAttempts: 3)),
+            api: APIRequest(method: .get, host: "https://base-url.com", path: "/retry")
+        )
+
+        let job = Task { try await endpoint.data() }
+        try await Task.sleep(for: .milliseconds(200))
+
+        let clock = ContinuousClock()
+        let start = clock.now
+        job.cancel()
+        let result = await job.result
+
+        #expect(clock.now - start < .seconds(5))
+        #expect(await counter.value == 1)
+        switch result {
+        case .success:
+            Issue.record("Expected cancellation")
+        case .failure(let error):
+            #expect((error as? APIError<Void>)?.kind == .cancelled)
+        }
     }
 }

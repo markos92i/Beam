@@ -9,81 +9,62 @@
 import Foundation
 
 /// A live WebSocket connection returned by `@Socket` methods.
-///
-/// Provides:
-/// - `messages`: An `AsyncThrowingStream` of decoded messages and connection events.
-/// - `state`: An `AsyncStream` of connection state changes (connecting, connected, reconnecting, disconnected).
-/// - `send(_:)`: Send a typed value to the server.
-/// - `disconnect()`: Gracefully close the connection.
-///
-/// Usage:
-/// ```swift
-/// let connection = try await api.chat()
-///
-/// // Observe messages
-/// Task {
-///     for try await event in connection.messages {
-///         switch event {
-///         case .message(let msg): handleMessage(msg)
-///         case .reconnecting: showReconnecting()
-///         case .reconnected: hideReconnecting()
-///         }
-///     }
-/// }
-///
-/// // Send a message
-/// try await connection.send(ChatMessage(text: "hola"))
-///
-/// // Disconnect when done
-/// await connection.disconnect()
-/// ```
 public struct WebSocketConnection<Success: Sendable, Failure: Sendable>: Sendable {
 
-    /// Stream of incoming messages and connection lifecycle events.
-    public let messages: AsyncThrowingStream<StreamEvent<Success, Failure>, Error>
+    /// Decoded messages across reconnections; throws the error that ended the connection.
+    public let messages: ThrowingStream<Success, APIError<Failure>>
 
-    /// Observable stream of connection state changes.
-    /// Yields state transitions (connecting, connected, reconnecting, disconnected).
+    /// Lifecycle changes; only the latest is buffered.
     public let state: AsyncStream<WebSocketConnectionState>
 
-    private let _send: @Sendable (Success) async throws(APIError<Failure>) -> Void
-    private let _sendData: @Sendable (Data) async throws(APIError<Failure>) -> Void
-    private let _sendText: @Sendable (String) async throws(APIError<Failure>) -> Void
-    private let _disconnect: @Sendable () async -> Void
-
-    init(
-        messages: AsyncThrowingStream<StreamEvent<Success, Failure>, Error>,
-        state: AsyncStream<WebSocketConnectionState>,
-        send: @escaping @Sendable (Success) async throws(APIError<Failure>) -> Void,
-        sendData: @escaping @Sendable (Data) async throws(APIError<Failure>) -> Void,
-        sendText: @escaping @Sendable (String) async throws(APIError<Failure>) -> Void,
-        disconnect: @escaping @Sendable () async -> Void
-    ) {
-        self.messages = messages
-        self.state = state
-        self._send = send
-        self._sendData = sendData
-        self._sendText = sendText
-        self._disconnect = disconnect
-    }
-
-    /// Sends a typed value as a JSON-encoded binary message.
-    public func send(_ value: Success) async throws(APIError<Failure>) {
-        try await _send(value)
-    }
+    let json: JSONCoding
+    let log: BeamLogger
+    let id: String
+    let socket: Socket
+    let run: Task<Void, Never>
 
     /// Sends raw data as a binary message.
     public func send(data: Data) async throws(APIError<Failure>) {
-        try await _sendData(data)
+        do throws(WebSocketError) { try await socket.send(data: data) } catch { throw APIError(error) }
     }
 
-    /// Sends a string as a text message.
     public func send(text: String) async throws(APIError<Failure>) {
-        try await _sendText(text)
+        do throws(WebSocketError) { try await socket.send(text: text) } catch { throw APIError(error) }
     }
 
-    /// Gracefully disconnects the WebSocket.
+    /// Closes with `.normalClosure`.
     public func disconnect() async {
-        await _disconnect()
+        await close(.normalClosure)
+    }
+
+    /// Socket first, so the server gets `code` rather than a cancelled receive's `.goingAway`.
+    func close(_ code: URLSessionWebSocketTask.CloseCode) async {
+        await socket.close(code: code)
+        run.cancel()
+    }
+}
+
+extension WebSocketConnection where Success: Encodable {
+    /// Sends `value` as JSON in a binary message, with the API's `JSONCoding`.
+    public func send(_ value: Success) async throws(APIError<Failure>) {
+        try await send(data: try await Self.encode(value, json: json, log: log, id: id))
+    }
+
+    /// `@concurrent` so a main-actor caller doesn't encode on the main actor.
+    @concurrent
+    private static func encode(_ value: Success, json: JSONCoding, log: BeamLogger, id: String) async throws(APIError<Failure>) -> Data {
+        do {
+            return try json.encode(value)
+        } catch {
+            log.log(.codingFailed(id: id, what: "WebSocket message not encoded", detail: error.logDescription))
+            throw .coding(error)
+        }
+    }
+}
+
+extension WebSocketConnection where Success == String {
+    /// Sends `value` unencoded as a text message.
+    public func send(_ value: String) async throws(APIError<Failure>) {
+        try await send(text: value)
     }
 }

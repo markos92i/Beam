@@ -8,7 +8,6 @@
 import Foundation
 
 public enum HTTPMethod: String, Sendable, CustomStringConvertible {
-    case connect = "CONNECT"
     case delete = "DELETE"
     case get = "GET"
     case head = "HEAD"

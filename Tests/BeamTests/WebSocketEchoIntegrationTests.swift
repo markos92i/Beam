@@ -18,11 +18,11 @@ struct WebSocketEchoIntegrationTests {
     // MARK: - Helpers
 
     /// Creates a real Endpoint configured to connect to the echo server.
-    private func makeEndpoint<Message: Sendable & Codable>(
+    private func makeEndpoint(
         path: String = "/raw",
         config: RequestConfig = RequestConfig(retry: .none, pingInterval: nil)
-    ) -> Endpoint<Message, Void> {
-        Endpoint<Message, Void>(
+    ) -> Endpoint<String, Void> {
+        Endpoint<String, Void>(
             config: config,
             api: APIRequest(
                 method: .get,
@@ -43,11 +43,9 @@ struct WebSocketEchoIntegrationTests {
         try await connection.send(text: message)
 
         var received: String?
-        for try await event in connection.messages {
-            if case .message(let msg) = event {
-                received = msg
-                break
-            }
+        for try await msg in connection.messages {
+            received = msg
+            break
         }
 
         await connection.disconnect()
@@ -66,11 +64,9 @@ struct WebSocketEchoIntegrationTests {
             try await connection.send(text: msg)
         }
 
-        for try await event in connection.messages {
-            if case .message(let msg) = event {
-                received.append(msg)
-                if received.count == messages.count { break }
-            }
+        for try await msg in connection.messages {
+            received.append(msg)
+            if received.count == messages.count { break }
         }
 
         await connection.disconnect()
@@ -88,11 +84,9 @@ struct WebSocketEchoIntegrationTests {
         }
 
         var received: [String] = []
-        for try await event in connection.messages {
-            if case .message(let msg) = event {
-                received.append(msg)
-                if received.count == count { break }
-            }
+        for try await msg in connection.messages {
+            received.append(msg)
+            if received.count == count { break }
         }
 
         await connection.disconnect()
@@ -134,9 +128,7 @@ struct WebSocketEchoIntegrationTests {
 
         // Send and receive to confirm it's working
         try await connection.send(text: "ping")
-        for try await event in connection.messages {
-            if case .message = event { break }
-        }
+        for try await _ in connection.messages { break }
 
         await connection.disconnect()
 
@@ -157,7 +149,7 @@ struct WebSocketEchoIntegrationTests {
     @Test
     func connectionWithPingKeepAlive() async throws {
         let endpoint: Endpoint<String, Void> = makeEndpoint(
-            config: RequestConfig(retry: .none, pingInterval: 2)
+            config: RequestConfig(retry: .none, pingInterval: .seconds(2))
         )
         let connection = try await endpoint.connect()
 
@@ -168,11 +160,9 @@ struct WebSocketEchoIntegrationTests {
         try await connection.send(text: "still alive")
 
         var received: String?
-        for try await event in connection.messages {
-            if case .message(let msg) = event {
-                received = msg
-                break
-            }
+        for try await msg in connection.messages {
+            received = msg
+            break
         }
 
         await connection.disconnect()

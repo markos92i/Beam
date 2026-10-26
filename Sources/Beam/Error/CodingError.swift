@@ -1,5 +1,5 @@
 //
-//  MapperError.swift
+//  CodingError.swift
 //  Beam
 //
 //  Created by Marcos del Castillo Camacho on 15/05/2026.
@@ -7,16 +7,19 @@
 
 import Foundation
 
-public enum MapperError: Error, LoggableError {
-    case unsuported
-    case incorrect
-    case encoding(Error, description: String)
-    case decoding(Error, description: String)
+/// Failures of encoding or decoding a body.
+public enum CodingError: Error, LoggableError {
+    /// The body isn't of the form the call reads: not UTF-8 text, not an image, or replaced by an interceptor.
+    case typeMismatch
+    /// `description` renders the coding path.
+    case encoding(EncodingError, description: String)
+    /// `description` renders the coding path.
+    case decoding(DecodingError, description: String)
     
     init(encodingError: EncodingError) {
         let description: String = switch encodingError {
         case .invalidValue(let value, let context):
-            context.formattedTree(error: "invalidValue", detail: "\(type(of: value)) 􀰌 􀃰 could not encode")
+            formattedTree(codingPath: context.codingPath, error: "invalidValue", detail: "\(type(of: value)) 􀰌 􀃰 could not encode")
         @unknown default:
             "unknown"
         }
@@ -27,13 +30,13 @@ public enum MapperError: Error, LoggableError {
     init(decodingError: DecodingError) {
         let description: String = switch decodingError {
         case .typeMismatch(let type, let context):
-            context.formattedTree(error: "typeMismatch", detail: "\(type) 􀰌 􀃰 wrong type")
+            formattedTree(codingPath: context.codingPath, error: "typeMismatch", detail: "\(type) 􀰌 􀃰 wrong type")
         case .valueNotFound(let type, let context):
-            context.formattedTree(error: "valueNotFound", detail: "\(type) 􀰌 􀃰 nil value")
+            formattedTree(codingPath: context.codingPath, error: "valueNotFound", detail: "\(type) 􀰌 􀃰 nil value")
         case .keyNotFound(let key, let context):
-            context.formattedTree(error: "keyNotFound", detail: "\"\(key.stringValue)\" 􀃰 missing key")
+            formattedTree(codingPath: context.codingPath, error: "keyNotFound", detail: "\"\(key.stringValue)\" 􀃰 missing key")
         case .dataCorrupted(let context):
-            context.formattedTree(error: "dataCorrupted", detail: "􀃰 \(context.debugDescription)")
+            formattedTree(codingPath: context.codingPath, error: "dataCorrupted", detail: "􀃰 \(context.debugDescription)")
         @unknown default:
             "unknown"
         }
@@ -41,16 +44,12 @@ public enum MapperError: Error, LoggableError {
         self = .decoding(decodingError, description: description)
     }
 
-    @inline(__always)
+    @inline(always)
     var logDescription: String {
         switch self {
-        case .unsuported:
-            "The mapper does not support this type. Use a custom Mapper or change the response type."
-        case .incorrect:
-            "The response type does not match the data received from the server."
-        case .encoding(_, let description):
-            description
-        case .decoding(_, let description):
+        case .typeMismatch:
+            "The body doesn't have the expected form (text, image, data or a file)."
+        case .encoding(_, let description), .decoding(_, let description):
             description
         }
     }
@@ -58,7 +57,6 @@ public enum MapperError: Error, LoggableError {
 
 // MARK: - Coding Path Formatting
 
-/// Renders a coding path as an indented tree for structured error logging.
 private func formattedTree(codingPath: [CodingKey], error: String, detail: String) -> String {
     let indent = "    "
     var lines = [error]
@@ -86,16 +84,4 @@ private func formattedTree(codingPath: [CodingKey], error: String, detail: Strin
     }
 
     return lines.joined(separator: "\n")
-}
-
-private extension DecodingError.Context {
-    func formattedTree(error: String, detail: String) -> String {
-        Beam.formattedTree(codingPath: codingPath, error: error, detail: detail)
-    }
-}
-
-private extension EncodingError.Context {
-    func formattedTree(error: String, detail: String) -> String {
-        Beam.formattedTree(codingPath: codingPath, error: error, detail: detail)
-    }
 }

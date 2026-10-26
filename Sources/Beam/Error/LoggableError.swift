@@ -7,10 +7,7 @@
 
 import Foundation
 
-/// Errors that provide a human-readable description for structured logging.
-///
-/// The logger renders `logDescription` as-is — multiline strings are supported
-/// and will be printed preserving line breaks.
+/// The logger prints `logDescription` as-is, line breaks included.
 protocol LoggableError: Error {
     var logDescription: String { get }
 }

@@ -7,15 +7,11 @@
 
 import Foundation
 
-/// Contract for authentication providers used by Endpoint.
+/// An authentication provider. Beam's providers log with ``BeamLogger/level``, not `@API(logLevel:)`.
 public protocol AuthProtocol: Sendable {
-    /// Applies authentication to the outgoing request.
-    ///
-    /// Implementations should add headers, query parameters, or any other
-    /// authentication artifact directly to the request.
-    func authenticate(request: inout URLRequest) async throws
+    /// Adds credentials to the outgoing request.
+    func authenticate(request: inout URLRequest) async throws(AuthError)
 
-    /// Marks the current authentication state as invalid, triggering
-    /// refresh on next access.
+    /// Marks the credentials invalid, so the next access refreshes them.
     func invalidate() async
 }

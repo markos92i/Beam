@@ -7,48 +7,44 @@
 
 import Foundation
 
+/// Failures of the HTTP transport (`Client`): URLSession's own, or of files it handles itself.
 public enum TransportError: Error, LoggableError {
-    case invalidURL
-    case invalidResume
-    case noResponse
-    case cancelled
-    case url(URLError)
-    case http(status: HTTPStatus, body: Data?)
-    case unknown(Error)
+    case network(URLError)
+    /// A file the transport needs could not be read, written or kept.
+    case file(FileError)
 
-    @inline(__always)
-    public var status: HTTPStatus {
-        if case .http(let status, _) = self { status } else { .undefined }
+    /// The `URLError` behind a network failure.
+    public var urlError: URLError? {
+        if case .network(let error) = self { error } else { nil }
     }
 
-    @inline(__always)
-    var body: Data? {
-        if case .http(_, let body) = self { body } else { nil }
-    }
-
-    @inline(__always)
     var logDescription: String {
         switch self {
-        case .invalidURL: "The URL is invalid"
-        case .invalidResume: "The resume data is missing or is invalid"
-        case .noResponse: "Didnt receive response from server"
-        case .cancelled: "Task cancelled"
-        case .url(let error): error.localizedDescription
-        case .http(let status, _): "HTTP: \(status.rawValue)"
-        case .unknown(let error): error.localizedDescription
+        case .network(let error): error.logDescription
+        case .file(let error): error.logDescription
+        }
+    }
+}
+
+// MARK: - URLError
+
+extension URLError {
+    /// URLSession's async APIs are untyped but document `URLError`; anything else becomes `.unknown`.
+    init(bridging error: any Error) {
+        switch error {
+        case let error as URLError: self = error
+        case is CancellationError: self.init(.cancelled)
+        default: self.init(.unknown, userInfo: [NSUnderlyingErrorKey: error])
         }
     }
 
-    @inline(__always)
-    var isRetryable: Bool {
-        switch self {
-        case .url(let error):
-            switch error.code {
-            case .timedOut, .networkConnectionLost, .notConnectedToInternet: true
-            default: false
-            }
-        case .http(let status, _): status.type == .serverError || status == .unauthorized
+    /// Shared by HTTP retries and WebSocket reconnection.
+    var isTransient: Bool {
+        switch code {
+        case .timedOut, .networkConnectionLost, .notConnectedToInternet: true
         default: false
         }
     }
+
+    var logDescription: String { localizedDescription }
 }

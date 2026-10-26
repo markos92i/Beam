@@ -12,15 +12,15 @@ public actor TokenAuth: AuthProtocol {
 
     // MARK: - Token
 
-    /// A token with a value and expiration date.
+    /// A token and its expiration.
     public struct Token: Sendable {
-        /// The raw token value (e.g., JWT string, access token).
+        /// The raw token (e.g. a JWT).
         public let value: String
 
-        /// When this token expires. The engine will refresh before using an expired token.
+        /// An expired token is refreshed before use.
         public let expiration: Date
 
-        /// Whether the token is still usable (not expired).
+        /// Whether it hasn't expired.
         public var isValid: Bool { Date.now < expiration }
 
         public init(value: String, expiration: Date) {
@@ -28,7 +28,6 @@ public actor TokenAuth: AuthProtocol {
             self.expiration = expiration
         }
 
-        /// Convenience for tokens expressed as "seconds from now".
         public init(value: String, expiresIn seconds: TimeInterval) {
             self.value = value
             self.expiration = Date.now.addingTimeInterval(seconds)
@@ -56,7 +55,7 @@ public actor TokenAuth: AuthProtocol {
     // MARK: - Properties
 
     private let name: String
-    private let onRefresh: @Sendable () async throws -> Token
+    private let onRefresh: @Sendable () async throws(AuthError) -> Token
     private let onSessionLost: (@Sendable () async -> Void)?
     private let applyToken: @Sendable (Token, inout URLRequest) -> Void
     private let log = BeamLogger()
@@ -65,19 +64,15 @@ public actor TokenAuth: AuthProtocol {
         didSet { log.log(.auth(type: "TokenAuth", name: name, detail: "state → \(state.name)")) }
     }
 
-    private var refreshTask: Task<Token, any Error>?
-    private var waitTask: Task<Token, any Error>?
+    // Typed `Result`: `Task` can't carry a typed failure.
+    private var refreshTask: Task<Result<Token, AuthError>, Never>?
+    private var waitTask: Task<Result<Token, AuthError>, Never>?
     private var initContinuation: CheckedContinuation<Void, Never>?
 
     // MARK: - Init
 
-    /// Creates a token-based auth provider with the default Bearer scheme.
-    ///
-    /// - Parameters:
-    ///   - name: Identifier for this auth provider (used in logs).
-    ///   - refresh: Called when a new token is needed (expired or invalidated).
-    ///   - onSessionLost: Called when the session is irrecoverably lost (refresh failed with invalid credentials).
-    ///     Use this to clear local state and navigate to login. No network calls should be made here.
+    /// Bearer scheme. `name` identifies the provider in logs. `onSessionLost` runs when refresh
+    /// fails with `.invalidCredentials`: clear local state there, without network calls.
     public init(
         name: String = "Auth",
         refresh: @escaping @Sendable () async throws(AuthError) -> Token,
@@ -91,13 +86,7 @@ public actor TokenAuth: AuthProtocol {
         }
     }
 
-    /// Creates a token-based auth provider with custom request application.
-    ///
-    /// - Parameters:
-    ///   - name: Identifier for this auth provider (used in logs).
-    ///   - refresh: Called when a new token is needed (expired or invalidated).
-    ///   - onSessionLost: Called when the session is irrecoverably lost (refresh failed with invalid credentials).
-    ///   - apply: Closure that applies the resolved token to the outgoing request.
+    /// `apply` puts the token on the request instead of the Bearer header.
     public init(
         name: String = "Auth",
         refresh: @escaping @Sendable () async throws(AuthError) -> Token,
@@ -112,7 +101,7 @@ public actor TokenAuth: AuthProtocol {
 
     // MARK: - AuthProtocol
 
-    public func authenticate(request: inout URLRequest) async throws {
+    public func authenticate(request: inout URLRequest) async throws(AuthError) {
         let token = try await resolveToken()
         applyToken(token, &request)
     }
@@ -124,13 +113,13 @@ public actor TokenAuth: AuthProtocol {
 
     // MARK: - Lifecycle
 
-    /// Sets an initial token (e.g., after login).
+    /// Sets the token (e.g. after login).
     public func set(token: Token) {
         state = .ready(token)
         resumeInit()
     }
 
-    /// Clears the token (e.g., on logout). Subsequent requests will fail with `AuthError.missingToken`.
+    /// Clears the token (e.g. on logout); later requests fail with `.missingToken`.
     public func clear() {
         state = .empty
         resumeInit()
@@ -142,7 +131,7 @@ public actor TokenAuth: AuthProtocol {
 
     // MARK: - Token Resolution
 
-    private func resolveToken() async throws -> Token {
+    private func resolveToken() async throws(AuthError) -> Token {
         switch state {
         case .loading:
             return try await wait()
@@ -161,49 +150,58 @@ public actor TokenAuth: AuthProtocol {
 
     // MARK: - Refresh
 
-    private func refresh() async throws -> Token {
-        if let refreshTask { return try await refreshTask.value }
+    private func refresh() async throws(AuthError) -> Token {
+        if let refreshTask {
+            return try await refreshTask.value.get()
+        }
 
-        let task = Task { () throws -> Token in
+        let task = Task(name: "Beam.TokenAuth.refresh") { () -> Result<Token, AuthError> in
             defer { refreshTask = nil }
 
             self.log.log(.auth(type: "TokenAuth", name: name, detail: "refreshing 􀅈"))
 
-            do {
+            do throws(AuthError) {
                 let newToken = try await onRefresh()
                 self.state = .ready(newToken)
-                self.log.log(.auth(type: "TokenAuth", name: name, detail: "refreshed 􀆅"))
-                return newToken
-            } catch AuthError.invalidCredentials {
+                self.log.log(.auth(type: "TokenAuth", name: name, detail: "success 􀆅"))
+                return .success(newToken)
+            } catch .invalidCredentials {
+                self.log.log(.auth(type: "TokenAuth", name: name, detail: "failure 􀆄 invalidCredentials"))
                 self.clear()
                 await onSessionLost?()
-                throw AuthError.invalidCredentials
-            } catch is CancellationError {
-                throw AuthError.cancelled
+                return .failure(.invalidCredentials)
+            } catch .cancelled {
+                self.log.log(.auth(type: "TokenAuth", name: name, detail: "failure 􀆄 cancelled"))
+                return .failure(.cancelled)
             } catch {
+                self.log.log(.auth(type: "TokenAuth", name: name, detail: "failure 􀆄 failedToRefreshToken"))
                 self.state = .invalid
-                throw AuthError.failedToRefreshToken
+                return .failure(.failedToRefreshToken)
             }
         }
 
         refreshTask = task
-        return try await task.value
+        return try await task.value.get()
     }
 
     // MARK: - Wait (initial token)
 
-    private func wait() async throws -> Token {
-        if let waitTask { return try await waitTask.value }
+    private func wait() async throws(AuthError) -> Token {
+        if let waitTask { return try await waitTask.value.get() }
 
-        let task = Task { () throws -> Token in
+        let task = Task(name: "Beam.TokenAuth.wait") { () -> Result<Token, AuthError> in
             defer { waitTask = nil }
             await withCheckedContinuation { initContinuation = $0 }
-            if Task.isCancelled { throw AuthError.cancelled }
-            return try await resolveToken()
+            if Task.isCancelled { return .failure(.cancelled) }
+            do throws(AuthError) {
+                return .success(try await resolveToken())
+            } catch {
+                return .failure(error)
+            }
         }
 
         waitTask = task
-        return try await task.value
+        return try await task.value.get()
     }
 
     // MARK: - Helpers

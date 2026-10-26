@@ -7,39 +7,54 @@
 
 import Foundation
 
-public struct RequestConfig: Sendable, Equatable {
+// Not `Equatable`: the JSON strategies can be closures (`.custom`), which don't compare.
+public struct RequestConfig: Sendable {
     public var retry: RetryPolicy
-    public var timeout: TimeInterval
-    public var pingInterval: TimeInterval?
+    public var timeout: Duration
+    public var pingInterval: Duration?
     public var authPolicy: AuthPolicy
+    /// How JSON bodies are encoded and decoded.
+    public var json: JSONCoding
 
     public init(
         retry: RetryPolicy = .standard,
-        timeout: TimeInterval = 30,
-        pingInterval: TimeInterval? = nil,
-        authPolicy: AuthPolicy = .required
+        timeout: Duration = .seconds(30),
+        pingInterval: Duration? = nil,
+        authPolicy: AuthPolicy = .required,
+        json: JSONCoding = .default
     ) {
         self.retry = retry
         self.timeout = timeout
         self.pingInterval = pingInterval
         self.authPolicy = authPolicy
+        self.json = json
     }
 
-    /// Returns a copy with only the specified fields replaced.
-    /// Fields passed as `nil` keep their current value.
+    /// A copy with the non-`nil` fields replaced.
     public func replacing(
         retry: RetryPolicy? = nil,
-        timeout: TimeInterval? = nil,
-        pingInterval: TimeInterval?? = nil,
-        authPolicy: AuthPolicy? = nil
+        timeout: Duration? = nil,
+        pingInterval: Duration?? = nil,
+        authPolicy: AuthPolicy? = nil,
+        json: JSONCoding? = nil
     ) -> RequestConfig {
         RequestConfig(
             retry: retry ?? self.retry,
             timeout: timeout ?? self.timeout,
             pingInterval: pingInterval ?? self.pingInterval,
-            authPolicy: authPolicy ?? self.authPolicy
+            authPolicy: authPolicy ?? self.authPolicy,
+            json: json ?? self.json
         )
     }
 
     public static let standard = RequestConfig()
+}
+
+// MARK: - Foundation Bridging
+
+extension Duration {
+    var timeInterval: TimeInterval {
+        let (seconds, attoseconds) = components
+        return TimeInterval(seconds) + TimeInterval(attoseconds) / 1e18
+    }
 }

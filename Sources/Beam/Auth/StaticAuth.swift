@@ -14,11 +14,7 @@ public actor StaticAuth: AuthProtocol {
     private let apply: @Sendable (inout URLRequest) -> Void
     private let log = BeamLogger()
 
-    /// Creates a static auth provider.
-    ///
-    /// - Parameters:
-    ///   - name: Identifier for this auth provider (used in logs).
-    ///   - apply: Closure that adds static credentials to the request.
+    /// `name` identifies the provider in logs. `apply` adds the credentials to the request.
     public init(name: String = "Static", apply: @escaping @Sendable (inout URLRequest) -> Void) {
         self.name = name
         self.apply = apply
@@ -26,14 +22,12 @@ public actor StaticAuth: AuthProtocol {
 
     // MARK: - AuthProtocol
 
-    public func authenticate(request: inout URLRequest) async throws {
+    public func authenticate(request: inout URLRequest) async {
         apply(&request)
     }
 
     public func invalidate() async {
-        // No-op: static credentials cannot be refreshed. Individual requests
-        // will fail with 401 if the key is rejected, but the provider
-        // remains usable for subsequent calls.
-        log.log(.auth(type: "StaticAuth", name: name, detail: "rejected"))
+        // Static credentials can't be refreshed; the provider stays usable.
+        log.log(.auth(type: "StaticAuth", name: name, detail: "rejected", level: .debug))
     }
 }

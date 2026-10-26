@@ -19,7 +19,6 @@ struct BeamMacrosPlugin: CompilerPlugin {
         PatchMacro.self,
         HeadMacro.self,
         OptionsMacro.self,
-        ConnectMacro.self,
         TraceMacro.self,
         SocketMacro.self,
     ]

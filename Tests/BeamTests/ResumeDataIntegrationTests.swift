@@ -3,7 +3,7 @@
 //  Beam
 //
 //  Integration test using a real network download (Big Buck Bunny).
-//  Verifies that calling cancel() on a Client mid-download produces valid
+//  Verifies that cancelling a Client's call mid-download produces valid
 //  resume data and that resuming with it works.
 //
 //  ⚠️ Requires internet. Run manually:
@@ -17,8 +17,9 @@ import Testing
 @Suite("ResumeData Integration", .tags(.network))
 struct ResumeDataIntegrationTests {
 
-    /// ~180MB file — the download won't finish before we cancel.
-    private let fileURL = URL(string: "https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_480p_h264.mov")!
+    /// 100 MB file served with range support — the download won't finish before we
+    /// cancel, and resuming it stays short.
+    private let fileURL = URL(string: "https://proof.ovh.net/files/100Mb.dat")!
 
     @Test
     func downloadCancelProducesResumeData() async throws {
@@ -31,9 +32,9 @@ struct ResumeDataIntegrationTests {
         }
 
         // 2. Wait for the download to actually start
-        try await Task.sleep(for: .seconds(2))
+        try await Task.sleep(for: .milliseconds(500))
 
-        // 3. Cancel via the Client's cancel() (produces resume data)
+        // 3. Cancel through the call's control (produces resume data)
         let resumeData = await client.cancel()
 
         // 4. The task should finish with an error
@@ -69,36 +70,32 @@ struct ResumeDataIntegrationTests {
 @Suite("ResumeData Background Integration", .tags(.network))
 struct ResumeDataBackgroundIntegrationTests {
 
-    /// ~180MB file — the download won't finish before we cancel.
-    private let fileURL = URL(string: "https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_480p_h264.mov")!
+    /// 100 MB file served with range support — the download won't finish before we
+    /// cancel, and resuming it stays short.
+    private let fileURL = URL(string: "https://proof.ovh.net/files/100Mb.dat")!
 
     @Test
     func downloadCancelProducesResumeDataWithBackgroundSession() async throws {
-        let session = Session(
-            identifier: "com.beam.test.resume.\(UUID().uuidString)",
-            isDiscretionary: false,
-            sessionSendsLaunchEvents: false
+        let endpoint = Endpoint<URL, Void>(
+            config: RequestConfig(retry: .none),
+            api: APIRequest(method: .get, host: "https://proof.ovh.net", path: "/files/100Mb.dat")
         )
-        let client = Client(session: session)
+        let handle = endpoint.backgroundDownloadTask(on: backgroundTestSession)
 
-        // 1. Start download via task-based path (background-compatible)
-        let request = URLRequest(url: fileURL)
-        let downloadTask = Task {
-            try await client.downloadTask(for: request)
+        // 1. Start the download on the background session
+        let downloadTask = Task { () -> Result<URL, APIError<Void>> in
+            do throws(APIError<Void>) { return .success(try await handle.start(id: UUID().uuidString)) } catch { return .failure(error) }
         }
 
         // 2. Wait for the download to actually start
-        try await Task.sleep(for: .seconds(2))
+        try await Task.sleep(for: .milliseconds(500))
 
-        // 3. Cancel via the Client's cancel() (produces resume data)
-        let resumeData = await client.cancel()
+        // 3. Cancel through the handle (produces resume data)
+        let resumeData = await handle.cancel()
 
         // 4. The task should finish with an error
-        do {
-            _ = try await downloadTask.value
+        if case .success = await downloadTask.value {
             Issue.record("Expected error after cancel")
-        } catch {
-            // Expected — the task was cancelled
         }
 
         // 5. Verify we have resume data
@@ -106,17 +103,13 @@ struct ResumeDataBackgroundIntegrationTests {
         #expect(resumeData?.isEmpty == false, "El resume data no debería estar vacío")
 
         guard let validResumeData = resumeData else { return }
-        print("✅ Resume data obtenido (background): \(validResumeData.count) bytes")
 
-        // 6. Resume the download with the resume data via the task-based path
-        let client2 = Client(session: session)
-        let (url, response) = try await client2.downloadTask(for: request, resumeFrom: validResumeData)
+        // 6. Resume the download with the resume data on the background session
+        let url = try await endpoint.backgroundDownloadTask(on: backgroundTestSession)
+            .start(id: UUID().uuidString, resumeFrom: validResumeData)
 
-        #expect(response.statusCode == 200 || response.statusCode == 206)
         let fileSize = try Data(contentsOf: url).count
         #expect(fileSize > 0, "El fichero reanudado no debería estar vacío")
-        print("✅ Descarga reanudada (background): \(fileSize) bytes")
-
         try? FileManager.default.removeItem(at: url)
     }
 }

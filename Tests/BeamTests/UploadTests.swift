@@ -15,9 +15,9 @@ struct UploadTests {
     @Test
     func uploadSuccess() async throws {
         let mockBody = ResponseMock(id: "upload-id", value: 1000)
-        let expectedData = try JSONEncoder().encode(mockBody)
+        let expectedData = json(mockBody)
 
-        let session = MockSession({ request in
+        let session = MockSession({ (request) throws(URLError) in
             let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             return (expectedData, response)
         })
@@ -29,7 +29,7 @@ struct UploadTests {
 
     @Test
     func uploadCancel() async throws {
-        let session = MockSession({ request in
+        let session = MockSession({ (request) throws(URLError) in
             let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             return (Data(), response)
         }, nil, delay: 2)
@@ -39,7 +39,7 @@ struct UploadTests {
         do {
             let job = Task { try await api.upload(body: UploadRequestMock(content: "Dummy")) }
             Task {
-                try await Task.sleep(for: .seconds(0.5))
+                try? await Task.sleep(for: .seconds(0.5))
                 job.cancel()
             }
             _ = try await job.value
@@ -52,14 +52,14 @@ struct UploadTests {
     @Test
     func uploadURLSuccess() async throws {
         let mockBody = ResponseMock(id: "upload-id", value: 1000)
-        let expectedData = try JSONEncoder().encode(mockBody)
+        let expectedData = json(mockBody)
         let temporaryURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try expectedData.write(to: temporaryURL)
         defer { try? FileManager.default.removeItem(at: temporaryURL) }
 
-        let session = MockSession({ request in
+        let session = MockSession({ (request) throws(URLError) in
             let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
-            let data = try Data(contentsOf: temporaryURL)
+            guard let data = try? Data(contentsOf: temporaryURL) else { throw URLError(.fileDoesNotExist) }
             return (data, response)
         })
 
@@ -73,7 +73,7 @@ struct UploadTests {
     @Test
     func uploadResumeSuccess() async throws {
         let expectedResponse = ResponseMock(id: "upload-id", value: 1000)
-        let expectedData = try JSONEncoder().encode(expectedResponse)
+        let expectedData = json(expectedResponse)
         let resumeData = "{ resume: true }".data(using: .utf8)!
 
         let session = MockSession(uploadResume: { data in

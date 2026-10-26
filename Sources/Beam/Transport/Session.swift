@@ -7,94 +7,108 @@
 
 import Foundation
 
-/// Beam-managed URLSession wrapper that owns the session and its delegate.
-///
-/// Use `Session` when you need Beam to control the session lifecycle — required
-/// for background transfers and SSL pinning. For simple foreground requests or
-/// testing, you can still pass a raw `URLSession` via `SessionProtocol`.
-///
-/// ```swift
-/// // Background session with SSL pinning
-/// let session = Session(
-///     configuration: .background(withIdentifier: "com.myapp.transfers"),
-///     trustPolicy: MyTrustPolicy()
-/// )
-///
-/// // Default foreground session
-/// let session = Session()
-/// ```
-public final class Session: SessionProtocol, @unchecked Sendable {
-    private let urlSession: URLSession
-    public let sessionDelegate: SessionDelegate
+// MARK: - Kinds
 
-    /// The session identifier, if using a background configuration.
-    public var identifier: String? { urlSession.configuration.identifier }
+/// A foreground session: every kind of call, while the app runs.
+public enum Foreground {}
 
-    /// Whether this session uses a background configuration.
-    public var isBackground: Bool { identifier != nil }
+/// A background session: uploads and downloads that go on while the app is suspended or terminated.
+public enum Background {}
 
-    public init(
-        configuration: URLSessionConfiguration = .default,
-        trustPolicy: (any TransportTrustPolicy)? = nil
-    ) {
-        self.sessionDelegate = SessionDelegate(trustPolicy: trustPolicy)
-        self.urlSession = URLSession(
-            configuration: configuration,
-            delegate: sessionDelegate,
-            delegateQueue: nil
-        )
+// MARK: - Mode
+
+/// How a ``Session`` is created; the mode decides whether it is foreground or background.
+public struct SessionMode<Kind>: Sendable {
+    let makeConfiguration: @Sendable () -> URLSessionConfiguration
+}
+
+extension SessionMode where Kind == Foreground {
+    /// `URLSessionConfiguration.default`: persistent cache, cookies and credentials.
+    public static var `default`: SessionMode { SessionMode { .default } }
+
+    /// `URLSessionConfiguration.ephemeral`: nothing is persisted to disk.
+    public static var ephemeral: SessionMode { SessionMode { .ephemeral } }
+}
+
+extension SessionMode where Kind == Background {
+    /// `URLSessionConfiguration.background(withIdentifier:)`. Use the same identifier
+    /// on every launch, to reconnect with the transfers of the previous one.
+    public static func background(_ identifier: String) -> SessionMode {
+        SessionMode { .background(withIdentifier: identifier) }
     }
+}
 
-    /// Convenience initializer for background sessions.
-    public convenience init(
-        identifier: String,
+// MARK: - Session
+
+/// Beam's URLSession: Beam owns its delegate (trust, delegate-driven transfers, background events).
+/// A background session must be one per identifier, alive for the whole process.
+public final class Session<Kind>: Sendable {
+    let urlSession: URLSession
+    public let sessionDelegate: SessionDelegate
+    let registry: BackgroundTaskRegistry
+
+    /// `trustPolicy` evaluates server trust (SSL pinning) for every task.
+    public init(
+        _ mode: SessionMode<Kind> = .default,
         trustPolicy: (any TransportTrustPolicy)? = nil,
-        isDiscretionary: Bool = false,
-        sessionSendsLaunchEvents: Bool = true
+        configure: (URLSessionConfiguration) -> Void = { _ in }
     ) {
-        let config = URLSessionConfiguration.background(withIdentifier: identifier)
-        config.isDiscretionary = isDiscretionary
-        config.sessionSendsLaunchEvents = sessionSendsLaunchEvents
-        self.init(configuration: config, trustPolicy: trustPolicy)
+        let configuration = mode.makeConfiguration()
+        configure(configuration)
+        // Only a background session keeps unawaited transfers: they can finish while the app isn't running.
+        self.sessionDelegate = SessionDelegate(
+            trustPolicy: trustPolicy,
+            store: configuration.identifier.map(TransferStore.init(sessionIdentifier:))
+        )
+        self.urlSession = URLSession(configuration: configuration, delegate: sessionDelegate, delegateQueue: nil)
+        self.registry = BackgroundTaskRegistry(session: urlSession)
     }
 
     deinit {
         urlSession.invalidateAndCancel()
     }
 
-    // MARK: - SessionProtocol (async convenience)
+    // MARK: - Task Management
 
-    public func bytes(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws -> (URLSession.AsyncBytes, URLResponse) {
-        try await urlSession.bytes(for: request, delegate: delegate)
+    /// All tasks in the session, including those reconnected after a relaunch.
+    public var allTasks: [URLSessionTask] {
+        get async { await urlSession.allTasks }
     }
 
-    public func data(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse) {
-        try await urlSession.data(for: request, delegate: delegate)
+    /// Cancels every task of the session.
+    public func cancelAllTasks() async {
+        for task in await allTasks { task.cancel() }
+    }
+}
+
+// MARK: - Foreground
+
+extension Session: SessionProtocol where Kind == Foreground {
+    // URLSession's async methods are untyped: this is the single bridge to `URLError`.
+
+    public func bytes(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws(URLError) -> (URLSession.AsyncBytes, URLResponse) {
+        do { return try await urlSession.bytes(for: request, delegate: delegate) } catch { throw URLError(bridging: error) }
     }
 
-    public func download(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws -> (URL, URLResponse) {
-        try await urlSession.download(for: request, delegate: delegate)
+    public func data(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws(URLError) -> (Data, URLResponse) {
+        do { return try await urlSession.data(for: request, delegate: delegate) } catch { throw URLError(bridging: error) }
     }
 
-    public func download(resumeFrom data: Data, delegate: URLSessionTaskDelegate?) async throws -> (URL, URLResponse) {
-        try await urlSession.download(resumeFrom: data, delegate: delegate)
+    public func download(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws(URLError) -> (URL, URLResponse) {
+        do { return try await urlSession.download(for: request, delegate: delegate) } catch { throw URLError(bridging: error) }
     }
 
-    public func upload(for request: URLRequest, from data: Data, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse) {
-        try await urlSession.upload(for: request, from: data, delegate: delegate)
+    public func download(resumeFrom data: Data, delegate: URLSessionTaskDelegate?) async throws(URLError) -> (URL, URLResponse) {
+        do { return try await urlSession.download(resumeFrom: data, delegate: delegate) } catch { throw URLError(bridging: error) }
     }
 
-    public func upload(for request: URLRequest, fromFile url: URL, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse) {
-        try await urlSession.upload(for: request, fromFile: url, delegate: delegate)
+    public func upload(for request: URLRequest, from data: Data, delegate: URLSessionTaskDelegate?) async throws(URLError) -> (Data, URLResponse) {
+        do { return try await urlSession.upload(for: request, from: data, delegate: delegate) } catch { throw URLError(bridging: error) }
     }
 
-    public func upload(resumeFrom data: Data, delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse) {
-        let task = urlSession.uploadTask(withResumeData: data)
-        delegate?.urlSession?(urlSession, didCreateTask: task)
-        return try await sessionDelegate.awaitUpload(for: task)
+    public func upload(for request: URLRequest, fromFile url: URL, delegate: URLSessionTaskDelegate?) async throws(URLError) -> (Data, URLResponse) {
+        do { return try await urlSession.upload(for: request, fromFile: url, delegate: delegate) } catch { throw URLError(bridging: error) }
     }
-
-    // MARK: - SessionProtocol (task-based)
 
     public func downloadTask(with request: URLRequest) -> URLSessionDownloadTask {
         urlSession.downloadTask(with: request)
@@ -112,44 +126,11 @@ public final class Session: SessionProtocol, @unchecked Sendable {
         urlSession.uploadTask(with: request, fromFile: url)
     }
 
+    public func uploadTask(withResumeData data: Data) -> URLSessionUploadTask {
+        urlSession.uploadTask(withResumeData: data)
+    }
+
     public func webSocketTask(with request: URLRequest) -> URLSessionWebSocketTask {
         urlSession.webSocketTask(with: request)
-    }
-
-    // MARK: - Task Management
-
-    /// All tasks currently running on this session.
-    public var allTasks: [URLSessionTask] {
-        get async { await urlSession.allTasks }
-    }
-
-    /// Cancels all in-flight tasks on this session.
-    public func cancelAllTasks() async {
-        for task in await allTasks { task.cancel() }
-    }
-
-    // MARK: - Background Transfer Results
-
-    /// Results from background transfers completed while the app was suspended or terminated.
-    ///
-    /// Consumes all accumulated results — subsequent calls return an empty array
-    /// until new background events arrive.
-    public var pendingResults: [BackgroundTransferResult] {
-        sessionDelegate.consumePendingResults()
-    }
-
-    /// An async stream of background transfer results, yielding each result as it arrives.
-    ///
-    /// Useful inside `.backgroundTask(.urlSession("..."))` to process results one by one.
-    /// The stream finishes when all pending events have been delivered.
-    public var resultStream: AsyncStream<BackgroundTransferResult> {
-        AsyncStream { continuation in
-            // Yield any already-accumulated results
-            for result in sessionDelegate.consumePendingResults() {
-                continuation.yield(result)
-            }
-            // Stream future results as they arrive
-            sessionDelegate.setResultsContinuation(continuation)
-        }
     }
 }

@@ -22,15 +22,15 @@ struct FeedEvent: Codable, Sendable, Equatable {
 
 // MARK: - Test Helpers
 
-/// Creates an AsyncStream of lines from a multi-line string (simulates a streaming source).
-func mockLines(_ text: String) -> AsyncStream<String> {
-    let lines = text.components(separatedBy: "\n")
-    return AsyncStream { continuation in
-        for line in lines {
-            continuation.yield(line)
-        }
-        continuation.finish()
+/// A line stream from a multi-line string (simulates a streaming source), ending
+/// with `failure` when given.
+func mockLines(_ text: String, failingWith failure: APIError<Never>? = nil) -> ThrowingStream<String, APIError<Never>> {
+    let (stream, continuation) = ThrowingStream<String, APIError<Never>>.makeStream()
+    for line in text.components(separatedBy: "\n") {
+        continuation.yield(line)
     }
+    continuation.finish(throwing: failure)
+    return stream
 }
 
 // MARK: - SSE Parser Unit Tests
@@ -156,7 +156,7 @@ struct JSONLinesDecoderTests {
         """)
 
         var items: [FeedEvent] = []
-        for try await item in JSONLinesSequence<_, FeedEvent>(base: lines) {
+        for try await item in LineSequence<FeedEvent, Void>.jsonLines(lines, elements: ElementDecoder(.json, json: .default)) {
             items.append(item)
         }
 
@@ -176,7 +176,7 @@ struct JSONLinesDecoderTests {
         """)
 
         var items: [FeedEvent] = []
-        for try await item in JSONLinesSequence<_, FeedEvent>(base: lines) {
+        for try await item in LineSequence<FeedEvent, Void>.jsonLines(lines, elements: ElementDecoder(.json, json: .default)) {
             items.append(item)
         }
 
@@ -188,11 +188,25 @@ struct JSONLinesDecoderTests {
         let lines = mockLines("not valid json")
 
         do {
-            for try await _ in JSONLinesSequence<_, FeedEvent>(base: lines) {}
+            for try await _ in LineSequence<FeedEvent, Void>.jsonLines(lines, elements: ElementDecoder(.json, json: .default)) {}
             Issue.record("Expected decoding error")
         } catch {
-            #expect(error is MapperError)
+            #expect(error == .decode)
         }
+    }
+
+    @Test("A failure of the line stream surfaces typed, after the lines before it")
+    func lineStreamFailureSurfacesTyped() async {
+        let lines = mockLines(#"{"id":1,"message":"a"}"#, failingWith: APIError(TransportError.network(URLError(.networkConnectionLost))))
+
+        var received: [FeedEvent] = []
+        do {
+            for try await item in LineSequence<FeedEvent, Void>.jsonLines(lines, elements: ElementDecoder(.json, json: .default)) { received.append(item) }
+            Issue.record("Expected the stream's failure")
+        } catch {
+            #expect(error == .noConnection)
+        }
+        #expect(received.count == 1)
     }
 }
 
@@ -213,7 +227,7 @@ struct SSEDecoderStreamTests {
         """)
 
         var chunks: [ChatChunk] = []
-        for try await chunk in SSESequence<_, ChatChunk>(base: lines) {
+        for try await chunk in LineSequence<ChatChunk, SSEBuffer>.sseEvents(lines, elements: ElementDecoder(.json, json: .default)) {
             chunks.append(chunk)
         }
 
@@ -238,7 +252,7 @@ struct SSEDecoderStreamTests {
         """)
 
         var events: [SSEvent] = []
-        for try await event in SSERawSequence(base: lines) {
+        for try await event in LineSequence.sseRawEvents(lines) {
             events.append(event)
         }
 
@@ -262,7 +276,7 @@ struct SSEDecoderStreamTests {
         """)
 
         var events: [SSEvent] = []
-        for try await event in SSERawSequence(base: lines) {
+        for try await event in LineSequence.sseRawEvents(lines) {
             events.append(event)
         }
 
@@ -280,7 +294,7 @@ struct SSEDecoderStreamTests {
         """)
 
         var events: [SSEvent] = []
-        for try await event in SSERawSequence(base: lines) {
+        for try await event in LineSequence.sseRawEvents(lines) {
             events.append(event)
         }
 

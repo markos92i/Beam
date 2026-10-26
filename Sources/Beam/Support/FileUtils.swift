@@ -6,52 +6,83 @@
 //
 
 import Foundation
-import UniformTypeIdentifiers
 
-public struct FileUtils {
-    /// Derives a filename with proper extension from server-suggested name and content type.
-    public static func resolveFilename(suggestedFilename: String?, contentType: String) -> String {
-        if let suggested = suggestedFilename, !suggested.isEmpty {
-            let suggestedURL = URL(fileURLWithPath: suggested)
-            if suggestedURL.pathExtension.isEmpty {
-                let ext = UTType(mimeType: contentType)?.preferredFilenameExtension
-                    ?? String(contentType.split(separator: "/").last ?? "bin")
-                return "\(suggested).\(ext)"
-            }
-            return suggested
-        }
-        let ext = UTType(mimeType: contentType)?.preferredFilenameExtension
-            ?? String(contentType.split(separator: "/").last ?? "bin")
-        return "\(UUID().uuidString).\(ext)"
+enum FileUtils {
+    static func resolveFilename(suggestedFilename: String?, contentType: ContentType) -> String {
+        let name = suggestedFilename.flatMap { $0.isEmpty ? nil : $0 }
+        if let name, !URL(fileURLWithPath: name).pathExtension.isEmpty { return name }
+        let ext = contentType.utType?.preferredFilenameExtension
+            ?? String(contentType.mediaType.split(separator: "/").last ?? "bin")
+        return "\(name ?? UUID().uuidString).\(ext)"
     }
 
-    /// Copies a file to the specified directory with an appropriate filename.
-    public static func copy(
-        url: URL,
-        to directory: FileManager.SearchPathDirectory,
-        suggestedFilename: String? = nil,
-        contentType: String
-    ) throws(FileError) -> URL {
-        let dir = FileManager.default.urls(for: directory, in: .userDomainMask).first
-        let filename = resolveFilename(suggestedFilename: suggestedFilename, contentType: contentType)
+    /// Foundation's file errors are untyped but documented as `CocoaError`.
+    static func bridging<T>(_ wrap: (CocoaError) -> FileError, _ fallback: CocoaError.Code, _ operation: () throws -> T) throws(FileError) -> T {
+        do { return try operation() } catch { throw wrap(CocoaError(bridging: error, fallback: fallback)) }
+    }
 
-        guard let target = dir?.appendingPathComponent(filename) else {
-            throw .invalidTargetURL
-        }
+    // MARK: - Downloads
 
-        if FileManager.default.fileExists(atPath: target.path) {
-            do {
-                try FileManager.default.removeItem(at: target)
-            } catch {
-                throw .removeFailed(error)
-            }
-        }
+    /// A folder of its own, so two downloads with the same name never replace each other.
+    static func store(_ source: URL, for response: HTTPURLResponse) throws(FileError) -> URL {
+        let folder = URL.cachesDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let name = resolveFilename(suggestedFilename: response.suggestedFilename, contentType: response.contentType ?? .data)
+        let target = folder.appendingPathComponent(name)
+        try createDirectory(folder)
+        try move(source, to: target)
+        return target
+    }
 
-        do {
-            try FileManager.default.copyItem(at: url, to: target)
-            return target
-        } catch {
-            throw .copyFailed(error)
+    static func temporaryLocation(_ kind: String = "download") -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("Beam-\(kind)-\(UUID().uuidString)")
+    }
+
+    static func createDirectory(_ folder: URL) throws(FileError) {
+        try bridging(FileError.writeFailed, .fileWriteUnknown) { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+    }
+
+    /// Atomic: a reader never sees it half written.
+    static func write(_ data: Data, to url: URL) throws(FileError) {
+        try bridging(FileError.writeFailed, .fileWriteUnknown) { try data.write(to: url, options: .atomic) }
+    }
+
+    static func move(_ source: URL, to target: URL) throws(FileError) {
+        try bridging(FileError.moveFailed, .fileWriteUnknown) { try FileManager.default.moveItem(at: source, to: target) }
+    }
+
+    static func copy(_ source: URL, to target: URL) throws(FileError) {
+        try bridging(FileError.copyFailed, .fileWriteUnknown) { try FileManager.default.copyItem(at: source, to: target) }
+    }
+
+    /// Best effort: the system purges the temporary directory anyway.
+    static func discard(_ url: URL) {
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    // MARK: - Uploads
+
+    static func read(_ url: URL) throws(FileError) -> Data {
+        try bridging(FileError.readFailed, .fileReadUnknown) { try Data(contentsOf: url) }
+    }
+
+    static func read(_ url: URL, upTo limit: Int) throws(FileError) -> Data {
+        try bridging(FileError.readFailed, .fileReadUnknown) {
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            return try handle.read(upToCount: limit) ?? Data()
         }
+    }
+
+    /// Best effort: the status already tells the failure, the body is only detail.
+    static func errorBody(at url: URL) -> Data? {
+        try? read(url, upTo: HTTPErrorBody<Void>.limit)
+    }
+
+    /// URLSession sends an empty body for a missing file, and the call would look successful.
+    static func checkReadable(_ url: URL) throws(FileError) {
+        let path = url.path(percentEncoded: false)
+        guard !FileManager.default.isReadableFile(atPath: path) else { return }
+        let code: CocoaError.Code = FileManager.default.fileExists(atPath: path) ? .fileReadNoPermission : .fileReadNoSuchFile
+        throw .readFailed(CocoaError(code, userInfo: [NSFilePathErrorKey: path, NSURLErrorKey: url]))
     }
 }

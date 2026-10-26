@@ -9,29 +9,23 @@ import Foundation
 
 // MARK: - DisconnectionReason
 
-/// Reason why a WebSocket connection was disconnected.
+/// Why a WebSocket connection ended.
 public enum DisconnectionReason: Sendable, Equatable {
-    /// Server or network closed the connection normally.
+    /// The server closed normally.
     case closed
-    /// The client intentionally disconnected (e.g., called `disconnect()`).
+    /// `disconnect()` was called.
     case intentional
-    /// An error caused the disconnection. Uses `String` for `Equatable` conformance.
-    case error(String)
+    /// The full error is thrown by `messages`.
+    case error(APIErrorKind)
 }
 
 // MARK: - WebSocketConnectionState
 
-/// Observable state of a WebSocket connection lifecycle.
-///
-/// Consumers can observe state transitions via `WebSocketConnection.state` to drive UI
-/// (e.g., showing a reconnecting banner or disabling send buttons).
+/// Lifecycle of a WebSocket connection, observed via `WebSocketConnection.state`.
 public enum WebSocketConnectionState: Sendable, Equatable {
-    /// The WebSocket is attempting to establish the initial connection.
+    /// Establishing the first connection.
     case connecting
-    /// The WebSocket connection is active and ready.
     case connected
-    /// The WebSocket lost connection and is retrying.
     case reconnecting(attempt: Int, maxAttempts: Int)
-    /// The WebSocket is disconnected.
     case disconnected(reason: DisconnectionReason)
 }

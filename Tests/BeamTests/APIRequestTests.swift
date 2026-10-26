@@ -12,6 +12,30 @@ import Testing
 @Suite
 struct APIRequestTests {
 
+    // MARK: - Template
+
+    @Test
+    func theTemplateIsThePathByDefault() {
+        let request = APIRequest(method: .get, host: "https://api.example.com", path: "/users/42")
+        #expect(request.pathTemplate == "/users/42")
+    }
+
+    @Test
+    func anExplicitTemplateIsKept() {
+        let request = APIRequest(method: .get, host: "https://api.example.com", path: "/users/42", pathTemplate: "/users/{id}")
+        #expect(request.pathTemplate == "/users/{id}")
+    }
+
+    /// The template identifies the route of a background transfer: two routes built by
+    /// hand with the same method and id must not attach to each other's transfer.
+    @Test
+    func handBuiltRoutesHaveDifferentBackgroundKeys() {
+        func key(_ path: String) -> BackgroundTaskKey {
+            APIRequest(method: .get, host: "https://api.example.com", path: path).backgroundKey("doc-1")
+        }
+        #expect(key("/videos/1") != key("/photos/1"))
+    }
+
     // MARK: - URL Construction
 
     @Test

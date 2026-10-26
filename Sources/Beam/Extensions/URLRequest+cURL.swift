@@ -6,12 +6,7 @@
 import Foundation
 
 extension URLRequest {
-    /// Generates a copy-pasteable cURL command for this request.
-    ///
-    /// Usage in LLDB:
-    /// ```
-    /// po request.curl
-    /// ```
+    /// A copy-pasteable cURL command for this request (`po request.curl` in LLDB).
     public var curl: String {
         var parts = ["curl"]
 
