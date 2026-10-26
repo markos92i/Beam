@@ -33,14 +33,13 @@ struct LoggingTests {
 
     @Test
     func aBackgroundTransferNobodyAwaitsIsLoggedWithItsRoute() {
-        let config = RenderConfig(verbose: false, maxBodySize: 100)
         let succeeded = LogEvent.backgroundFinished(id: "video-42", method: "POST", path: "/{userID}/documents", status: 201, failure: nil)
         let failed = LogEvent.backgroundFinished(id: "video-42", method: "POST", path: "/{userID}/documents", status: nil, failure: "The network connection was lost.")
 
-        #expect(succeeded.rendered(in: config).contains("video-42"))
-        #expect(succeeded.rendered(in: config).contains("/{userID}/documents"))
+        #expect(succeeded.rendered(bodies: false).contains("video-42"))
+        #expect(succeeded.rendered(bodies: false).contains("/{userID}/documents"))
         #expect(succeeded.meta.level == .info)
-        #expect(failed.rendered(in: config).contains("The network connection was lost."))
+        #expect(failed.rendered(bodies: false).contains("The network connection was lost."))
         #expect(failed.meta.level == .warning)
         #expect(LogEvent.backgroundFinished(id: "x", method: "GET", path: "/", status: 404, failure: nil).meta.level == .warning)
     }
@@ -48,9 +47,23 @@ struct LoggingTests {
     @Test
     func aDownloadIsLoggedWithItsSuggestedNameAndSize() {
         let event = LogEvent.response(id: "a1", status: 200, headers: [:], body: .file(name: "report.pdf", bytes: 2048), start: Date())
-        let rendered = event.rendered(in: RenderConfig(verbose: false, maxBodySize: 100))
+        let rendered = event.rendered(bodies: false)
         #expect(rendered.contains("report.pdf"))
         #expect(rendered.contains(2048.byteFormatted))
+    }
+
+    /// Bodies are shown at debug level; an error response always shows its own.
+    @Test
+    func bodiesAreShownAtDebugLevelAndAlwaysForErrorResponses() {
+        func response(_ status: Int, bodies: Bool) -> String {
+            LogEvent.response(id: "a1", status: status, headers: [:], body: .data(Data(#"{"name":"Ana"}"#.utf8)), start: Date())
+                .rendered(bodies: bodies)
+        }
+        #expect(response(200, bodies: true).contains("Ana"))
+        #expect(!response(200, bodies: false).contains("Ana"))
+        #expect(response(404, bodies: false).contains("Ana"))
+        #expect(BeamLogger(level: .debug).logs(.debug, global: .warning))
+        #expect(!BeamLogger(level: .info).logs(.debug, global: .debug))
     }
 
     /// A global `.off` silences every log, also an API's with its own level.
@@ -67,9 +80,9 @@ struct LoggingTests {
     @Test
     func aRequestAndItsResponseLineUpByColumn() {
         let request = LogEvent.request(id: "A1F3", method: "DELETE", url: URL(string: "https://apis.randstad.es/a")!, headers: nil, body: nil)
-            .rendered(in: RenderConfig(verbose: false, maxBodySize: 100))
+            .rendered(bodies: false)
         let response = LogEvent.response(id: "A1F3", status: 404, headers: [:], body: .none, start: Date())
-            .rendered(in: RenderConfig(verbose: false, maxBodySize: 100))
+            .rendered(bodies: false)
         func start(of text: String, in log: String) -> Int {
             let line = log.prefix { $0 != "\n" }
             return line.distance(from: line.startIndex, to: line.range(of: text)!.lowerBound)

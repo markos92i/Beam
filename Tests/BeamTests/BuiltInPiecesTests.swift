@@ -181,7 +181,7 @@ struct CodingFailureTests {
     func aCodingFailureAfterTheCallIsAnError() {
         let event = LogEvent.codingFailed(id: "a1", what: "SSE event not decoded", detail: "keyNotFound delta")
         #expect(event.meta.level == .error)
-        let text = event.rendered(in: RenderConfig(verbose: false, maxBodySize: 100))
+        let text = event.rendered(bodies: false)
         #expect(text.contains("SSE event not decoded"))
         #expect(text.contains("keyNotFound delta"))
     }

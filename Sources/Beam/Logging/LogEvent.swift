@@ -82,25 +82,25 @@ extension LogEvent {
 
 // MARK: - Rendering
 extension LogEvent {
-    func rendered(in config: RenderConfig) -> String {
-        var lines = lines(in: config)
+    func rendered(bodies: Bool) -> String {
+        var lines = lines(bodies: bodies)
         if !lines.isEmpty { lines[0] = LogColumns.align(lines[0]) }
         return lines.joined(separator: "\n")
     }
 
     @LogBuilder
-    private func lines(in config: RenderConfig) -> [String] {
+    private func lines(bodies: Bool) -> [String] {
         switch self {
         // MARK: - HTTP
         case .request(let id, let method, let url, let headers, let body):
             "􀁶 \(id)\t􀋧 \(method)\t\(url.protocolLabel)\t\(url.hostLabel)\t\(url.pathLabel)\t\(url.queryLabel ?? "")"
             "􁒠 \(Self.headerDescription(headers))"
-            "􁒡 \(Self.bodyDescription(.from(body), verbose: config.verbose, max: config.maxBodySize))"
+            "􁒡 \(Self.bodyDescription(.from(body), full: bodies))"
             
         case .response(let id, let status, let headers, let body, let start):
             "􀁸 \(id)\t\(status.statusIcon) \(status)\t􀐫 \(start.elapsed)"
             "􁒠 \(Self.headerDescription(headers))"
-            "􁒡 \(Self.bodyDescription(body, verbose: config.verbose || status >= 400, max: config.verbose ? .max : config.maxBodySize))"
+            "􁒡 \(Self.bodyDescription(body, full: bodies || status >= 400))"
 
         case .retry(let id, let attempt, let max, let delay):
             "􀅈 \(id)\tretry \(attempt)/\(max)\tdelay: \(delay.formatted)"
@@ -124,14 +124,14 @@ extension LogEvent {
 
         case .wsSend(let id, let type, let body):
             "􀁶 \(id)\t\(type)"
-            "􁒡 \(Self.bodyDescription(body, verbose: config.verbose, max: config.maxBodySize))"
+            "􁒡 \(Self.bodyDescription(body, full: bodies))"
 
         case .wsReceive(let id, let type, let body):
             "􀁸 \(id)\t\(type)"
-            "􁒡 \(Self.bodyDescription(body, verbose: config.verbose, max: config.maxBodySize))"
+            "􁒡 \(Self.bodyDescription(body, full: bodies))"
 
         case .wsClose(let id, let code, let reason):
-            "􀁠 \(id)\tcode: \(code)\(reason.map { "\t\(String($0.prefix(config.maxBodySize)))" } ?? "")"
+            "􀁠 \(id)\tcode: \(code)\(reason.map { "\t\($0)" } ?? "")"
 
         case .wsPing(let id):
             "􀒙 \(id)\tpong"
@@ -170,15 +170,11 @@ extension LogEvent {
         return parts.joined(separator: ", ")
     }
 
-    private static func bodyDescription(_ body: Body, verbose: Bool, max: Int) -> String {
+    private static func bodyDescription(_ body: Body, full: Bool) -> String {
         switch body {
         case .data(let data) where !data.isEmpty:
-            if verbose {
-                if data.isJSON {
-                    return "\n" + data.jsonLog(max: max).joined(separator: "\n")
-                } else if let text = String(data: data, encoding: .utf8) {
-                    return "\n" + String(text.prefix(max))
-                }
+            if full, let text = data.isJSON ? data.prettyJSON : String(data: data, encoding: .utf8) {
+                return "\n" + text
             }
             return "\(data.count.byteFormatted)"
         case .file(let name, let bytes):

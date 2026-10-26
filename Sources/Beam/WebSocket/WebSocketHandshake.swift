@@ -8,18 +8,19 @@
 import Foundation
 import Synchronization
 
-/// Must be the task's delegate before `resume()`; the first callback decides the outcome.
+/// Must be the task's delegate before `resume()`; the first callback decides the outcome,
+/// with the subprotocol the server chose.
 final class WebSocketHandshake: NSObject, URLSessionWebSocketDelegate, Sendable {
     private enum State {
-        case pending(CheckedContinuation<Result<Void, URLError>, Never>?)
-        case finished(Result<Void, URLError>)
+        case pending(CheckedContinuation<Result<String?, URLError>, Never>?)
+        case finished(Result<String?, URLError>)
     }
 
     private let state = Mutex(State.pending(nil))
 
-    func outcome() async -> Result<Void, URLError> {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Result<Void, URLError>, Never>) in
-            let finished: Result<Void, URLError>? = state.withLock { state in
+    func outcome() async -> Result<String?, URLError> {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Result<String?, URLError>, Never>) in
+            let finished: Result<String?, URLError>? = state.withLock { state in
                 switch state {
                 case .pending:
                     state = .pending(continuation)
@@ -32,8 +33,8 @@ final class WebSocketHandshake: NSObject, URLSessionWebSocketDelegate, Sendable 
         }
     }
 
-    private func finish(_ result: Result<Void, URLError>) {
-        let waiter: CheckedContinuation<Result<Void, URLError>, Never>? = state.withLock { state in
+    private func finish(_ result: Result<String?, URLError>) {
+        let waiter: CheckedContinuation<Result<String?, URLError>, Never>? = state.withLock { state in
             guard case .pending(let waiter) = state else { return nil }
             state = .finished(result)
             return waiter
@@ -44,7 +45,7 @@ final class WebSocketHandshake: NSObject, URLSessionWebSocketDelegate, Sendable 
     // MARK: - URLSessionWebSocketDelegate
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
-        finish(.success(()))
+        finish(.success(`protocol`))
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {

@@ -166,10 +166,10 @@ struct WebSocketHandshakeTests {
         }
     }
 
-    /// A message that can't be decoded ends the stream with a typed `.decode` error,
-    /// is reported to the monitors, and is not retried.
+    /// A message that doesn't decode is skipped and logged; the connection goes on and
+    /// monitors don't see it, as with a byte stream's elements.
     @Test
-    func anUndecodableMessageEndsTheStreamWithATypedError() async throws {
+    func anUndecodableMessageIsSkippedAndNotReported() async throws {
         let monitor = FailureRecorder()
         let recorder = HandshakeRecorder()
         let endpoint = Endpoint<EchoMessage, Void>(
@@ -179,16 +179,12 @@ struct WebSocketHandshakeTests {
             api: APIRequest(method: .get, host: "wss://ws.postman-echo.com", path: "/raw")
         )
         let connection = try await endpoint.connect()
+        defer { Task { await connection.disconnect() } }
         try await connection.send(text: "not json")
-
-        do {
-            for try await _ in connection.messages {}
-            Issue.record("The stream must end with the decoding error")
-        } catch {
-            // `error` is statically APIError<Void>: no cast needed.
-            #expect(error == .decode, "Got \(error)")
-        }
+        try await connection.send(text: #"{"id":1}"#)
+        var messages = connection.messages.makeAsyncIterator()
+        #expect(try await messages.next() != nil)
         #expect(recorder.count == 1)
-        #expect(monitor.failures.withLock { $0.map(\.kind) } == [.decode], "\(monitor.failures.withLock { $0.map(\.kind) })")
+        #expect(monitor.failures.withLock { $0.isEmpty })
     }
 }

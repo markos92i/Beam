@@ -11,7 +11,6 @@ import Foundation
 public struct RequestConfig: Sendable {
     public var retry: RetryPolicy
     public var timeout: Duration
-    public var pingInterval: Duration?
     public var authPolicy: AuthPolicy
     /// How JSON bodies are encoded and decoded.
     public var json: JSONCoding
@@ -19,13 +18,11 @@ public struct RequestConfig: Sendable {
     public init(
         retry: RetryPolicy = .standard,
         timeout: Duration = .seconds(30),
-        pingInterval: Duration? = nil,
         authPolicy: AuthPolicy = .required,
         json: JSONCoding = .default
     ) {
         self.retry = retry
         self.timeout = timeout
-        self.pingInterval = pingInterval
         self.authPolicy = authPolicy
         self.json = json
     }
@@ -34,14 +31,12 @@ public struct RequestConfig: Sendable {
     public func replacing(
         retry: RetryPolicy? = nil,
         timeout: Duration? = nil,
-        pingInterval: Duration?? = nil,
         authPolicy: AuthPolicy? = nil,
         json: JSONCoding? = nil
     ) -> RequestConfig {
         RequestConfig(
             retry: retry ?? self.retry,
             timeout: timeout ?? self.timeout,
-            pingInterval: pingInterval ?? self.pingInterval,
             authPolicy: authPolicy ?? self.authPolicy,
             json: json ?? self.json
         )

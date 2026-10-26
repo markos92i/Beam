@@ -57,7 +57,7 @@ struct ContentTypeTests {
     func theLogNamesTheContentType() {
         func logged(_ header: String) -> String {
             LogEvent.response(id: "a1", status: 200, headers: ["Content-Type": header], body: .none, start: Date())
-                .rendered(in: RenderConfig(verbose: false, maxBodySize: 100))
+                .rendered(bodies: false)
         }
         #expect(logged("application/json; charset=utf-8").contains("􀡅 json"))
         #expect(logged("image/x-icon").contains("􀏅 image/x-icon"))

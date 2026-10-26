@@ -89,10 +89,11 @@ Arguments go in this order:
 | `auth` | `(any AuthProtocol)?` | `nil` | once |
 | `monitors` | `[any Monitor]` | `[]` | once |
 | `config` | `RequestConfig` | `.standard` | once |
+| `socket` | `SocketConfig` | `.standard` | once |
 | `interceptors` | `[any Interceptor]` | `[]` | once |
 | `logLevel` | `LogLevel?` | `nil` (uses `BeamLogger.level`) | once |
 
-"Once" values are built when the API's first client is created, and shared by all its clients. `host`, `base` and `headers` are re-evaluated on every request, so `headers: AppHeaders.current` always reflects the current state (signed-in user, device id…). They run on any thread: keep them cheap and thread-safe. `background:` is described in [Background transfers](#background-transfers).
+"Once" values are built when the API's first client is created, and shared by all its clients. `host`, `base` and `headers` are re-evaluated on every request, so `headers: AppHeaders.current` always reflects the current state (signed-in user, device id…). They run on any thread: keep them cheap and thread-safe. `background:` is described in [Background transfers](#background-transfers), `socket:` in [WebSocket](#websocket). Either one on an API with no routes that use it is a compile warning.
 
 `RequestConfig` holds the defaults every route of the API inherits:
 
@@ -101,7 +102,6 @@ extension RequestConfig {
     static let app = RequestConfig(
         retry: .resilient,          // default .standard
         timeout: .seconds(20),      // default .seconds(30)
-        pingInterval: .seconds(20), // WebSockets; default nil
         authPolicy: .required,      // default
         json: .iso8601              // default .default
     )
@@ -142,7 +142,7 @@ The task decides the return type:
 | `task: .upload` | Same as `.data`: the response body |
 | `task: .download` | `URL` of the downloaded file |
 | `task: .bytes` | `ByteStream<Element>` |
-| `@Socket` | `WebSocketConnection<Message, Failure>` |
+| `@Socket` | `WebSocketConnection<Incoming, Outgoing, Failure>` |
 
 The path must be a literal. A path without a leading `/` or with spaces, `<`, `>`, `|`, `\`, `^` or `` ` `` is a warning; string interpolation (`\(…)`) and placeholders that aren't Swift identifiers are errors.
 
@@ -156,7 +156,7 @@ The path must be a literal. A path without a leading `/` or with spaces, `<`, `>
 | `.linear(delay:maxAttempts:)` | fixed delay |
 | `.exponential(base:maxDelay:maxAttempts:)` | doubling delay, capped |
 
-Only transient failures are retried: 5xx statuses, timeouts, lost or missing connection, and dropped WebSockets. A `401` is handled by [auth](#authentication), not by the policy.
+Only transient failures are retried: 5xx statuses, timeouts, lost or missing connection, and WebSocket handshakes that time out. A `401` is handled by [auth](#authentication), not by the policy.
 
 ### Parameter roles
 
@@ -480,18 +480,22 @@ do {
 ## WebSocket
 
 ```swift
-@API(host: "wss://ws.example.com", config: RequestConfig(pingInterval: .seconds(20)))
-protocol ChatAPI {
-    @Socket("/rooms/{roomId}")
-    func connect(roomId: String) async throws(APIError<ErrorDto>) -> WebSocketConnection<ChatMessage, ErrorDto>
+extension SocketConfig {
+    static let chat = SocketConfig(ping: .seconds(20), maxMessageSize: 4_000_000)
 }
 
-let connection = try await ChatAPIClient().connect(roomId: "42")
+@API(host: "wss://ws.example.com", socket: .chat)
+protocol ChatAPI {
+    @Socket("/rooms/{roomId}")
+    func join(roomId: String) async throws(APIError<ErrorDto>) -> WebSocketConnection<ChatEvent, ChatCommand, ErrorDto>
+}
+
+let connection = try await ChatAPIClient().join(roomId: "42")
 
 // Consume messages and state in separate tasks.
 Task {
     do {
-        for try await message in connection.messages { handle(message) }
+        for try await event in connection.messages { handle(event) }
     } catch {
         show(error)   // APIError<ErrorDto>: why the connection ended
     }
@@ -501,20 +505,53 @@ Task {
         switch state {
         case .reconnecting(let attempt, let max): banner = "Reconnecting \(attempt)/\(max)"
         case .connected: banner = nil
-        case .connecting, .disconnected: break
+        case .disconnected: break
         }
     }
 }
 
-try await connection.send(ChatMessage(text: "Hello"))
+try await connection.send(.say("Hello"))   // a ChatCommand
 await connection.disconnect()
 ```
 
-- **Handshake.** `connect()` goes through the API's interceptors, auth (a `401` refreshes once), validation, retries and monitors. It succeeds with `101`; an upgrade the server refuses is `.http(status:…)`.
-- **Messages** are decoded as the message type: text frames as UTF-8 data, binary frames as is. `send(_:)` exists only when Beam can encode the message type: `Encodable` goes as JSON in a binary frame, `String` as a text frame. `send(data:)` and `send(text:)` are always available.
-- **State** drives the UI; only the latest is buffered. `.connecting` precedes each handshake, `.reconnecting(attempt:maxAttempts:)` a scheduled retry, and `.disconnected(reason:)` the end: `.closed` (the server closed normally), `.intentional` (`disconnect()`), or `.error(kind)`.
-- **Reconnection.** When an open connection drops, Beam re-establishes it with the route's `RetryPolicy`; the new connection's messages keep coming in the same `messages`. A normal close (1000, 1001) ends `messages` without an error. A message that can't be decoded ends it with `.coding`, never retried. Otherwise `messages` throws the `APIError` that ended the connection. Stopping the iteration closes the socket.
-- `pingInterval` keeps the connection alive; it is honoured only between 1 and 300 seconds.
+- **Types.** The connection receives `Incoming` and sends `Outgoing`, each read and written by its type like any body: `Decodable`/`Encodable` as JSON, `String` as text, `Data` as is. `send(_:)` exists only when `Outgoing` can be encoded; `send(data:)` and `send(text:)` always exist. JSON goes in text frames unless `jsonFrames: .binary`.
+- **Handshake.** `join(…)` goes through the API's interceptors, auth (a `401` refreshes once), validation, `retry` and monitors, and returns once connected (`101`). An upgrade the server refuses is `.http(status:…)`.
+- **Lifetime.** The connection stays open while something holds it or its `messages`; releasing them, stopping the iteration or `disconnect()` closes it.
+- **Messages.** A message that can't be decoded is skipped and logged at `.error`; the connection goes on, and monitors don't see it. One bigger than `maxMessageSize` ends the connection with `.connection(.messageTooLarge)`.
+- **Sending** while reconnecting, or after the end, fails at once with `.connection(.notConnected)`; nothing is queued.
+- **State** drives the UI; only the latest is buffered. It starts at `.connected`; `.reconnecting(attempt:maxAttempts:)` announces each reconnection attempt and `.disconnected(reason:)` the end: `.closed` (the server closed with 1000), `.intentional` (`disconnect()` or the connection was released), or `.error(kind)`.
+
+### Reconnection
+
+When an open connection drops, Beam re-establishes it with `SocketConfig.reconnect` (`.resilient` by default) and the new connection's messages keep coming in the same `messages`. Whether it reconnects depends on how it ended:
+
+| Ending | What happens |
+|---|---|
+| Close 1000 | `messages` ends without an error |
+| Close 1001, 1006, 1011, 1012, 1013, 1014; lost network; no pong in time | Reconnects |
+| Close 1002, 1003, 1007–1010; message over the limit | Ends with `.connection(…)`, not retried |
+| Close 4000–4999 (application codes) | Ends, unless listed in `reconnectsOn` |
+
+The reconnection budget starts over once a connection delivered a message or lasted the handshake `timeout`; a server that accepts and closes at once runs out of attempts. Reconnecting when the app returns to the foreground or the network comes back is up to the app (`scenePhase`, `NWPathMonitor`): connect again.
+
+### `SocketConfig`
+
+`@API(socket:)` sets it for the API's sockets; the same options on `@Socket` override it per route. They don't exist on other routes, so they can't be set where they wouldn't apply.
+
+| Option | Default | |
+|---|---|---|
+| `ping` | `nil` | Keep-alive interval, 1–300 s; a literal out of range doesn't compile |
+| `pongTimeout` | `ping` | Without a pong in this time, the connection counts as dropped |
+| `maxMessageSize` | 1 MB | Largest message received |
+| `reconnect` | `.resilient` | Policy after a drop; `retry` covers the first connection |
+| `protocols` | `[]` | Subprotocols offered; `connection.protocol` is the one the server chose |
+| `jsonFrames` | `.text` | `.text` or `.binary` |
+| `reconnectsOn` | `[]` | Application close codes (4000–4999) that reconnect |
+
+```swift
+@Socket("/graphql", protocols: ["graphql-transport-ws"], ping: .seconds(10), reconnect: .exponential(base: .seconds(1), maxDelay: .seconds(30), maxAttempts: 10))
+func subscriptions() async throws(APIError<ErrorDto>) -> WebSocketConnection<GraphQLMessage, GraphQLMessage, ErrorDto>
+```
 
 ## Sessions and SSL pinning
 
@@ -675,7 +712,7 @@ Every call throws `APIError<Failure>`, where `Failure` is the route's decoded er
 | `cancelled` | Any cancellation: task, URLSession, auth or socket |
 | `http(status:body:response:)` | A non-2xx response |
 | `transport(TransportError)` | `network(URLError)`, or `file(FileError)`: a file the transfer needs |
-| `connection(WebSocketError)` | `closed(code:reason:)`, `unexpectedDisconnection`, `pingFailed`, `network`, `sendFailed` |
+| `connection(WebSocketError)` | `closed(code:reason:)`, `unexpectedDisconnection`, `pingFailed`, `messageTooLarge`, `notConnected`, `network`, `sendFailed` |
 | `auth(AuthError)` | `missingToken`, `invalidCredentials`, `failedToRefreshToken` |
 | `coding(CodingError)` | `encoding`, `decoding` (with the coding path), `typeMismatch` (the body isn't the text, image or data the call reads) |
 | `storage(FileError)` | A file of the call itself: a multipart file, moving a finished download to Caches |
@@ -725,11 +762,10 @@ Beam logs to the unified log (`os.Logger`, subsystem `com.beam`):
 | | Debug | Release |
 |---|---|---|
 | `BeamLogger.level` | `.debug` | `.warning` |
-| `BeamLogger.verbose` (bodies) | `true` | `false` |
-| `BeamLogger.maxBodySize` (characters) | `2000` | `2000` |
 | Message privacy | `.public` | `.private`: `<private>` without a logging profile |
 
-- `level`, `verbose` and `maxBodySize` can change at runtime; privacy can't. Error responses (status ≥ 400) include their body regardless of `verbose`.
+- `level` can change at runtime; privacy can't.
+- Bodies are logged at `.debug`, whole (JSON pretty-printed). Above it a body shows only its size, except an error response (status ≥ 400), which always shows its own.
 - `@API(logLevel:)` sets the minimum level of everything an API's calls log. APIs without it use `BeamLogger.level`, and so do auth providers and background sessions (including transfers nobody awaits). `BeamLogger.level = .off` silences every Beam log, including APIs with their own `logLevel`.
 - `.warning` and `.error` reach the unified log as `OSLogType.error`; Beam never logs `.fault`.
 - The first line of each entry is aligned in columns, so a request lines up with its response.
@@ -740,7 +776,7 @@ Beam logs to the unified log (`os.Logger`, subsystem `com.beam`):
 | `.debug` | WebSocket messages and pings, credentials rejected by `SignedAuth` or `StaticAuth` |
 | `.info` | Requests, responses, retries, WebSocket open and close, `TokenAuth` state, finished background results |
 | `.warning` | 5xx responses, WebSocket reconnections, error bodies that don't decode, failed background results |
-| `.error` | Final errors, stream elements that don't decode, WebSocket messages that don't encode |
+| `.error` | Final errors, stream elements and WebSocket messages that don't decode, WebSocket messages that don't encode |
 
 ## Mocking and testing
 
@@ -756,9 +792,13 @@ await viewModel.load(userId: 42)   // viewModel.user?.name == "Test"
 
 - Closures are named `on<Name>`. Overloaded routes add the first parameter's label: `onItemId` and `onItemCode` for `item(id:)` and `item(code:)`, with a number when that still collides.
 - A closure receives the route's parameters and skips interceptors, auth and monitors.
-- Data, upload and download routes are mockable. One closure answers every way of calling the route: the direct call, `<route>Task(…)` and `<route>BackgroundTask(…)`. If the route has a `resumeFrom` parameter, the closure gets the resume data passed to `start(resumeFrom:)`, or empty data without it.
+- Data, upload, download and WebSocket routes are mockable. One closure answers every way of calling the route: the direct call, `<route>Task(…)` and `<route>BackgroundTask(…)`. If the route has a `resumeFrom` parameter, the closure gets the resume data passed to `start(resumeFrom:)`, or empty data without it.
 - A mocked call is cancelled like a real one: `cancel()` or cancelling the calling task makes it throw `.cancelled`.
-- Byte stream and WebSocket routes have no closure: a test can't build a `ByteStream` or a `WebSocketConnection`. Inject a session instead with `UsersAPIClient(session:)`, which also serves tests and previews of any route.
+- WebSocket routes answer with `WebSocketConnection.mock(_:failure:protocol:onSend:)`: it yields the given messages, stays open until `disconnect()` (or ends with `failure`), and hands what the app sends to `onSend`:
+  ```swift
+  api.onJoin = { roomId in .mock([.joined(roomId)]) { command in sent.append(command) } }
+  ```
+- Byte stream routes have no closure: a test can't build a `ByteStream`. Inject a session instead with `UsersAPIClient(session:)`, which also serves tests and previews of any route.
 
 ## Using Endpoint by hand
 
@@ -783,7 +823,7 @@ let file = try await Endpoint<URL, ErrorDto>(api, request: api.request(.get, url
 | `upload(_:resumeFrom:onProgress:)`, `download(resumeFrom:onProgress:)` | Native async transfers, cancelled with the calling task; `resumeFrom` applies to the first attempt |
 | `uploadTask(_:)`, `downloadTask()` | Handles |
 | `backgroundUploadTask(on:_:)`, `backgroundDownloadTask(on:)` | Background handles |
-| `stream()`, `connect()` | Byte stream and WebSocket |
+| `stream()`, `connect(socket:)` | Byte stream and WebSocket |
 | `mocking(_:)` | The same endpoint answered by a mock; `nil` restores the network |
 
 `download` and the download handles exist on `Endpoint<URL, Failure>` and return the file. Uploads take an `UploadContent`: `.body(HTTPBody)` encoded in memory (e.g. `.body(.multipart(form))`), or `.file(URL)` streamed from disk. Upload requests carry no body of their own: one fails with `APIError.conflictingUploadData`.

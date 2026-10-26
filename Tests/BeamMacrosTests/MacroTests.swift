@@ -472,7 +472,7 @@ struct MacroSyntaxRecognitionTests {
             @API(host: "https://api.example.com")
             protocol API {
                 @Socket("/live")
-                func live(url: URL) async throws(APIError<E>) -> WebSocketConnection<Msg, E>
+                func live(url: URL) async throws(APIError<E>) -> WebSocketConnection<Msg, Msg, E>
             }
             """
         #expect(diagnosticMessages(of: source).contains { $0.hasPrefix("A WebSocket route connects to its API's host and path") })
@@ -487,7 +487,7 @@ struct MacroSyntaxRecognitionTests {
             @API(host: "https://api.example.com")
             protocol API {
                 @Socket("/live")
-                func live(body: Hello) async throws(APIError<E>) -> WebSocketConnection<Msg, E>
+                func live(body: Hello) async throws(APIError<E>) -> WebSocketConnection<Msg, Msg, E>
             }
             """
         #expect(diagnosticMessages(of: source).contains { $0.hasPrefix("A WebSocket route can't have a body") })
@@ -834,7 +834,9 @@ struct MacroSyntaxRecognitionTests {
             """)
         #expect(code.contains("func feed() async throws(APIError<E>) -> Beam.ByteStream<Chunk> { return try await Beam::Endpoint<_, APIError<E>._Failure>("))
         #expect(code.contains(").stream() }"))
-        #expect(code.contains("func chat() async throws(APIError<E>) -> ChatConnection { return try await Beam::Endpoint<_, APIError<E>._Failure>("))
+        #expect(code.contains("func chat() async throws(APIError<E>) -> ChatConnection { if let mock = onChat { return try await mock() } return try await Beam::Endpoint<_, APIError<E>._Failure>("))
+        #expect(code.contains("var onChat: (() async throws(APIError<E>) -> ChatConnection)?"))
+        #expect(!code.contains("var onFeed"))
         #expect(code.contains(").connect() }"))
     }
 
@@ -918,5 +920,52 @@ struct MacroSyntaxRecognitionTests {
             """)
         #expect(!code.contains("BackgroundTask"))
         #expect(!code.contains("background:"))
+    }
+
+    // MARK: WebSockets
+
+    @Test
+    func socketOptionsOverrideTheAPIsSocketConfig() {
+        let code = route("""
+                @Socket("/chat", retry: .none, ping: .seconds(20), reconnect: .resilient, protocols: ["chat.v2"])
+                func chat() async throws(APIError<E>) -> WebSocketConnection<Event, Command, E>
+            """)
+        #expect(code.contains("connect(socket: _config.socket.replacing(ping: Swift::Duration.seconds(20), reconnect: Beam::RetryPolicy.resilient, protocols: [\"chat.v2\"]))"))
+        #expect(code.contains("config: _config.config.replacing(retry: Beam::RetryPolicy.none)"))
+        // Without socket options, the API's config as it is.
+        #expect(route("""
+                @Socket("/chat")
+                func chat() async throws(APIError<E>) -> WebSocketConnection<Event, Command, E>
+            """).contains("connect()"))
+    }
+
+    @Test
+    func socketLiteralsOutOfRangeDontCompile() {
+        func messages(_ options: String) -> [String] {
+            diagnosticMessages(of: """
+                @API(host: "wss://api.example.com")
+                protocol API {
+                    @Socket("/chat", \(options))
+                    func chat() async throws(APIError<E>) -> WebSocketConnection<Event, Command, E>
+                }
+                """)
+        }
+        #expect(messages("ping: .seconds(0)").contains { $0.contains("out of range") })
+        #expect(messages("ping: .milliseconds(400_000)").contains { $0.contains("out of range") })
+        #expect(messages("maxMessageSize: 0").contains { $0.contains("greater than zero") })
+        #expect(messages("ping: .seconds(20), maxMessageSize: 4_000_000").isEmpty)
+    }
+
+    @Test
+    func servicesNoRouteUsesAreWarnedAbout() {
+        let messages = diagnosticMessages(of: """
+            @API(host: "https://api.example.com", background: URLSessions.background, socket: .chat)
+            protocol API {
+                @Get("/a")
+                func a() async throws(APIError<E>) -> Dto
+            }
+            """)
+        #expect(messages.contains { $0.hasPrefix("'socket:' has no effect") })
+        #expect(messages.contains { $0.hasPrefix("'background:' has no effect") })
     }
 }

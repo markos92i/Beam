@@ -58,7 +58,7 @@ extension URL {
     }
 
     var hostLabel: String {
-        "􀉣 \(host() ?? "")"
+        "􀪯 \(host() ?? "")"
     }
 
     var pathLabel: String {
@@ -85,12 +85,6 @@ extension Data {
         return prettyString
     }
 
-    func jsonLog(max: Int) -> [String] {
-        let pretty = prettyJSON ?? String(data: self, encoding: .utf8) ?? "\(count) bytes"
-        var lines = String(pretty.prefix(max)).split(separator: "\n").map(String.init)
-        if pretty.count > max { lines.append("+ \(count.byteFormatted) total") }
-        return lines
-    }
 }
 
 // MARK: - Columns

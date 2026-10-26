@@ -77,7 +77,7 @@ extension APIError {
         case .transport(.file): .storage
         case .connection(let error):
             switch error {
-            case .closed, .unexpectedDisconnection, .pingFailed: .connectionClosed
+            case .closed, .unexpectedDisconnection, .pingFailed, .messageTooLarge, .notConnected: .connectionClosed
             case .network(let urlError): Self.kind(of: urlError)
             case .sendFailed: .sendFailed
             }

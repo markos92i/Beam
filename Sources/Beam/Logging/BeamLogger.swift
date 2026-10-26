@@ -44,33 +44,17 @@ public struct BeamLogger: Sendable {
 
     #if DEBUG
     private static let defaultLevel = LogLevel.debug
-    private static let defaultVerbose = true
     #else
     private static let defaultLevel = LogLevel.warning
-    private static let defaultVerbose = false
     #endif
 
     // Atomic: read from any thread on every log call, writable at runtime.
     private static let _level = Atomic<Int>(defaultLevel.rawValue)
-    private static let _verbose = Atomic<Bool>(defaultVerbose)
-    private static let _maxBodySize = Atomic<Int>(2000)
 
     /// Global minimum level for APIs without `@API(logLevel:)`; `.off` silences all of Beam.
     public static var level: LogLevel {
         get { LogLevel(rawValue: _level.load(ordering: .relaxed)) ?? defaultLevel }
         set { _level.store(newValue.rawValue, ordering: .relaxed) }
-    }
-
-    /// Logs full bodies. Error responses (status ≥ 400) always include theirs.
-    public static var verbose: Bool {
-        get { _verbose.load(ordering: .relaxed) }
-        set { _verbose.store(newValue, ordering: .relaxed) }
-    }
-
-    /// Maximum body characters printed.
-    public static var maxBodySize: Int {
-        get { _maxBodySize.load(ordering: .relaxed) }
-        set { _maxBodySize.store(newValue, ordering: .relaxed) }
     }
 
     // MARK: - Instance Configuration
@@ -116,7 +100,8 @@ public struct BeamLogger: Sendable {
     func log(_ event: LogEvent) {
         guard logs(event.meta.level) else { return }
 
-        let output = event.rendered(in: .current)
+        // Bodies are debug detail; error responses always show theirs.
+        let output = event.rendered(bodies: logs(.debug))
         emit(output, to: logger(for: event.meta.category), level: event.meta.level.osLogType)
     }
 

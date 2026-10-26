@@ -38,6 +38,7 @@ public struct APIMacro: PeerMacro {
             functions.append(function)
         }
         assignMockNames(&functions)
+        diagnoseUnusedServices(arguments, of: functions, attribute: node, in: context)
 
         var output = """
         // @unchecked Sendable: mock closures are nil in production and thread-safe by design.
@@ -49,7 +50,7 @@ public struct APIMacro: PeerMacro {
                 headers: \(arguments["headers"] ?? "[:]")
         """
         // Labels must follow `APIConfiguration.init`'s parameter order.
-        for label in ["session", "background", "auth", "monitors", "config", "interceptors", "logLevel"] {
+        for label in ["session", "background", "auth", "monitors", "config", "socket", "interceptors", "logLevel"] {
             if let value = arguments[label] { output += ",\n            \(label): \(value)" }
         }
         output += """
@@ -172,12 +173,39 @@ public struct APIMacro: PeerMacro {
                 if param.role == .body { diagnose(param.syntax, .socketBody) }
                 if param.role == .absoluteURL { diagnose(param.syntax, .socketURL) }
             }
+            if let ping = fn.route.options["ping"], let seconds = literalSeconds(ping), !(1...300).contains(seconds) {
+                diagnose(funcDecl.name, .pingOutOfRange(ping))
+            }
+            if let size = fn.route.options["maxMessageSize"].flatMap({ Int($0.replacingOccurrences(of: "_", with: "")) }), size <= 0 {
+                diagnose(funcDecl.name, .invalidMessageSize)
+            }
         case "upload":
             if let contentless { diagnose(funcDecl.name, .contentNotAllowed(contentless)) }
             if let body, file != nil { diagnose(body.syntax, .bodyWithFile) }
             if body == nil, file == nil { diagnose(funcDecl.name, .uploadWithoutContent) }
         default:
             if let contentless, let body { diagnose(body.syntax, .contentNotAllowed(contentless)) }
+        }
+    }
+
+    /// The seconds of a `.seconds(n)` or `.milliseconds(n)` literal.
+    private static func literalSeconds(_ duration: String) -> Double? {
+        let units: [(String, Double)] = [(".seconds(", 1), (".milliseconds(", 0.001)]
+        for (prefix, scale) in units where duration.hasPrefix(prefix) && duration.hasSuffix(")") {
+            let number = duration.dropFirst(prefix.count).dropLast().replacingOccurrences(of: "_", with: "")
+            return Double(number).map { $0 * scale }
+        }
+        return nil
+    }
+
+    /// Services only some routes use, on an API without them, would be silently ignored.
+    private static func diagnoseUnusedServices(_ arguments: [String: String], of functions: [FunctionInfo], attribute: AttributeSyntax, in context: some MacroExpansionContext) {
+        let kinds = Set(functions.map(\.route.taskKind))
+        if arguments["socket"] != nil, !kinds.contains("stream") {
+            context.diagnose(Diagnostic(node: attribute, message: MacroDiagnostic.unusedSocketConfig))
+        }
+        if arguments["background"] != nil, kinds.isDisjoint(with: ["upload", "download"]) {
+            context.diagnose(Diagnostic(node: attribute, message: MacroDiagnostic.unusedBackground))
         }
     }
 
@@ -267,9 +295,10 @@ public struct APIMacro: PeerMacro {
         case "stream", "bytes":
             // `_` lets the compiler infer the wrapper's generics from the declared return type.
             let endpoint = endpointExpression(fn, in: protocolName, success: "_")
+            let mock = fn.mockName.map { "if let mock = \($0) { return try await mock(\(fn.params.map(\.internalName).joined(separator: ", "))) }\n        " } ?? ""
             return """
                 \(signature) -> \(fn.returnType ?? "Void") {
-                    return try await \(endpoint).\(fn.route.taskKind == "stream" ? "connect" : "stream")()
+                    \(mock)return try await \(endpoint).\(fn.route.taskKind == "stream" ? "connect(\(socketExpression(fn.route.options).map { "socket: \($0)" } ?? ""))" : "stream()")
                 }
             """
         case "upload", "download":
@@ -372,12 +401,31 @@ public struct APIMacro: PeerMacro {
         ("json", "json", "Beam::JSONCoding"),
     ]
 
+    /// `@Socket` options: (route label, type of an implicit member).
+    private static let socketOverrides = [
+        ("ping", "Swift::Duration"),
+        ("pongTimeout", "Swift::Duration"),
+        ("maxMessageSize", "Swift::Int"),
+        ("reconnect", "Beam::RetryPolicy"),
+        ("protocols", "Swift::Array<Swift::String>"),
+        ("jsonFrames", "Beam::SocketConfig.JSONFrames"),
+        ("reconnectsOn", "Swift::Set<Swift::Int>"),
+    ]
+
     /// Implicit members get their type: `replacing` takes optionals, so `.none` would be `Optional.none`.
     private static func configExpression(_ options: [String: String]) -> String? {
-        let overrides = configOverrides.compactMap { option, label, type in
+        overridesExpression(of: "config", configOverrides.map { ($0.0, $0.1, $0.2) }, options)
+    }
+
+    private static func socketExpression(_ options: [String: String]) -> String? {
+        overridesExpression(of: "socket", socketOverrides.map { ($0.0, $0.0, $0.1) }, options)
+    }
+
+    private static func overridesExpression(of config: String, _ table: [(String, String, String)], _ options: [String: String]) -> String? {
+        let overrides = table.compactMap { option, label, type in
             options[option].map { "\(label): \($0.hasPrefix(".") ? type + $0 : $0)" }
         }
-        return overrides.isEmpty ? nil : "_config.config.replacing(\(overrides.joined(separator: ", ")))"
+        return overrides.isEmpty ? nil : "_config.\(config).replacing(\(overrides.joined(separator: ", ")))"
     }
 
     private static func requestExpression(_ fn: FunctionInfo, in protocolName: String) -> String {
@@ -466,9 +514,9 @@ public struct APIMacro: PeerMacro {
 
     // MARK: - Mock Properties
 
-    /// Byte streams and WebSockets aren't mockable: a test can't build their return types.
+    /// Byte streams aren't mockable: a test can't build a `ByteStream`. Sockets return `WebSocketConnection.mock`.
     private static func assignMockNames(_ functions: inout [FunctionInfo]) {
-        let mockable = functions.indices.filter { !["bytes", "stream"].contains(functions[$0].route.taskKind) }
+        let mockable = functions.indices.filter { functions[$0].route.taskKind != "bytes" }
         var nameCounts: [String: Int] = [:]
         for index in mockable { nameCounts[functions[index].name, default: 0] += 1 }
 

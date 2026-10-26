@@ -31,6 +31,10 @@ enum MacroDiagnostic: DiagnosticMessage {
     case contentNotAllowed(ContentlessMethod)
     case bodyWithFile
     case uploadWithoutContent
+    case pingOutOfRange(String)
+    case invalidMessageSize
+    case unusedSocketConfig
+    case unusedBackground
 
     var message: String {
         switch self {
@@ -58,6 +62,14 @@ enum MacroDiagnostic: DiagnosticMessage {
             "An upload route uploads its body or its file, not both: one of them would be dropped. Declare one route with `body` and another with `url`"
         case .uploadWithoutContent:
             "An upload route needs something to upload: a `body` parameter or the `url` of a file"
+        case .pingOutOfRange(let ping):
+            "'ping: \(ping)' is out of range: URLSession pings between 1 and 300 seconds"
+        case .invalidMessageSize:
+            "'maxMessageSize' must be greater than zero"
+        case .unusedSocketConfig:
+            "'socket:' has no effect: this API has no @Socket routes"
+        case .unusedBackground:
+            "'background:' has no effect: this API has no upload or download routes"
         }
     }
 
@@ -67,7 +79,7 @@ enum MacroDiagnostic: DiagnosticMessage {
 
     var severity: DiagnosticSeverity {
         switch self {
-        case .invalidPathCharacters, .pathMustStartWithSlash: .warning
+        case .invalidPathCharacters, .pathMustStartWithSlash, .unusedSocketConfig, .unusedBackground: .warning
         default: .error
         }
     }

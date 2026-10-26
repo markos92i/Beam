@@ -129,3 +129,12 @@ extension Endpoint where Success == Void, Failure == Void {
         self.init(testAPI(for: request, session: session, auth: auth, monitors: monitors, config: config, interceptors: interceptors, logLevel: logLevel), request: request)
     }
 }
+
+// MARK: - WebSockets
+
+extension Endpoint {
+    /// A socket that sends what it receives, so tests don't spell out the outgoing type.
+    func connect() async throws(APIError<Failure>) -> WebSocketConnection<Success, Success, Failure> {
+        try await connect(socket: nil)
+    }
+}

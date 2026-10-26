@@ -27,6 +27,7 @@ public macro API(
     auth: (any AuthProtocol)? = nil,
     monitors: [any Monitor] = [],
     config: RequestConfig = .standard,
+    socket: SocketConfig = .standard,
     interceptors: [any Interceptor] = [],
     logLevel: LogLevel? = nil
 ) = #externalMacro(module: "BeamMacros", type: "APIMacro")
@@ -67,9 +68,25 @@ public macro Options(_ path: String = "", task: _TaskKind = .data, query: [Strin
 @attached(peer)
 public macro Trace(_ path: String = "", task: _TaskKind = .data, query: [String: String] = [:], headers: [String: String] = [:], timeout: Duration? = nil, retry: RetryPolicy = .standard, auth: AuthPolicy? = nil, json: JSONCoding? = nil) = #externalMacro(module: "BeamMacros", type: "TraceMacro")
 
-/// WebSocket endpoint (GET + upgrade).
+/// WebSocket endpoint (GET + upgrade). `retry` covers the first connection, `reconnect` the
+/// ones after a drop; the socket options override the API's `SocketConfig`.
 @attached(peer)
-public macro Socket(_ path: String = "", query: [String: String] = [:], headers: [String: String] = [:], timeout: Duration? = nil, retry: RetryPolicy = .standard, auth: AuthPolicy? = nil, json: JSONCoding? = nil) = #externalMacro(module: "BeamMacros", type: "SocketMacro")
+public macro Socket(
+    _ path: String = "",
+    query: [String: String] = [:],
+    headers: [String: String] = [:],
+    timeout: Duration? = nil,
+    retry: RetryPolicy = .standard,
+    auth: AuthPolicy? = nil,
+    json: JSONCoding? = nil,
+    ping: Duration? = nil,
+    pongTimeout: Duration? = nil,
+    maxMessageSize: Int? = nil,
+    reconnect: RetryPolicy = .resilient,
+    protocols: [String] = [],
+    jsonFrames: SocketConfig.JSONFrames? = nil,
+    reconnectsOn: Set<Int> = []
+) = #externalMacro(module: "BeamMacros", type: "SocketMacro")
 
 // MARK: - Supporting Types
 
@@ -91,6 +108,7 @@ public struct APIConfiguration: Sendable {
     public let auth: (any AuthProtocol)?
     public let monitors: [any Monitor]
     public let config: RequestConfig
+    public let socket: SocketConfig
     public let interceptors: [any Interceptor]
     public let logLevel: LogLevel?
 
@@ -111,6 +129,7 @@ public struct APIConfiguration: Sendable {
         auth: (any AuthProtocol)? = nil,
         monitors: [any Monitor] = [],
         config: RequestConfig = .standard,
+        socket: SocketConfig = .standard,
         interceptors: [any Interceptor] = [],
         logLevel: LogLevel? = nil
     ) {
@@ -122,6 +141,7 @@ public struct APIConfiguration: Sendable {
         self.auth = auth
         self.monitors = monitors
         self.config = config
+        self.socket = socket
         self.interceptors = interceptors
         self.logLevel = logLevel
     }

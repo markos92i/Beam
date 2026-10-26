@@ -20,7 +20,7 @@ struct WebSocketEchoIntegrationTests {
     /// Creates a real Endpoint configured to connect to the echo server.
     private func makeEndpoint(
         path: String = "/raw",
-        config: RequestConfig = RequestConfig(retry: .none, pingInterval: nil)
+        config: RequestConfig = RequestConfig(retry: .none)
     ) -> Endpoint<String, Void> {
         Endpoint<String, Void>(
             config: config,
@@ -148,10 +148,8 @@ struct WebSocketEchoIntegrationTests {
 
     @Test
     func connectionWithPingKeepAlive() async throws {
-        let endpoint: Endpoint<String, Void> = makeEndpoint(
-            config: RequestConfig(retry: .none, pingInterval: .seconds(2))
-        )
-        let connection = try await endpoint.connect()
+        let endpoint: Endpoint<String, Void> = makeEndpoint()
+        let connection: WebSocketConnection<String, String, Void> = try await endpoint.connect(socket: SocketConfig(ping: .seconds(2)))
 
         // Wait enough time for at least one ping cycle
         try await Task.sleep(for: .seconds(3))

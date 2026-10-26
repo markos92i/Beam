@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Synchronization
 
 enum Payload: Sendable {
     case data(Data)
@@ -23,17 +24,19 @@ extension Call {
         uploading content: UploadContent? = nil,
         resumeFrom resumeData: Data? = nil,
         after previous: (error: APIError<Failure>, attempt: EndpointContext.Attempt)? = nil,
+        retry: RetryPolicy? = nil,
+        budget: RetryBudget = RetryBudget(),
         observers: [any Monitor] = [],
         send: (URLRequest, Payload?) async throws(APIError<Failure>) -> Response,
         output: (Response) async throws(APIError<Failure>) -> sending Output
     ) async throws(APIError<Failure>) -> Output {
-        let monitors = allMonitors + observers
+        let retry = retry ?? config.retry
+        let monitors = [LogMonitor(log: log, maxAttempts: retry.maxAttempts)] + self.monitors + observers
         var resumeData = resumeData
         var encoded: Data?
         let clock = ContinuousClock()
         let start = clock.now
         var attempts: [EndpointContext.Attempt] = []
-        var policyRetries = 0
         var refreshedAuth = false
         var lastRequest: URLRequest?
         var lastResponse: Response?
@@ -63,6 +66,8 @@ extension Call {
                 let (error, finished) = failure
 
                 guard !Task.isCancelled else { throw fail(.cancelled, finished) }
+                // The caller already decided `previous` is worth repeating (a dropped connection).
+                let repeatable = error.isRetryable || (previous != nil && attempts.count == 1)
 
                 if error.status == .unauthorized, let auth, !refreshedAuth {
                     // Refresh and repeat once, outside the retry policy.
@@ -70,9 +75,8 @@ extension Call {
                     await auth.invalidate()
                     for monitor in monitors { monitor.willRetry(after: error.asVoid, delay: .zero, context: finished) }
                 } else {
-                    guard policyRetries < config.retry.maxAttempts, error.isRetryable else { throw fail(error, finished) }
-                    policyRetries += 1
-                    let delay = config.retry.delay(for: policyRetries)
+                    guard budget.spent < retry.maxAttempts, repeatable else { throw fail(error, finished) }
+                    let delay = retry.delay(for: budget.spend())
                     for monitor in monitors { monitor.willRetry(after: error.asVoid, delay: delay, context: finished) }
                     if delay > .zero {
                         do { try await Task.sleep(for: delay) } catch { throw fail(.cancelled, finished) }
@@ -129,10 +133,6 @@ extension Call {
                 pending = (error, context.finished(attempts: attempts, elapsed: clock.now - start))
             }
         }
-    }
-
-    var allMonitors: [any Monitor] {
-        [LogMonitor(log: log, maxAttempts: config.retry.maxAttempts)] + monitors
     }
 
     // MARK: - Steps
@@ -236,5 +236,23 @@ extension EndpointContext {
             id: id, method: method, pathTemplate: pathTemplate, operation: operation,
             attempt: attempt, attempts: attempts, elapsed: elapsed
         )
+    }
+}
+
+// MARK: - RetryBudget
+
+/// Retries spent by a call; a WebSocket shares one across reconnections.
+final class RetryBudget: Sendable {
+    private let count = Mutex(0)
+
+    var spent: Int { count.withLock { $0 } }
+
+    /// Spends one retry and returns how many are spent.
+    func spend() -> Int {
+        count.withLock { $0 += 1; return $0 }
+    }
+
+    func reset() {
+        count.withLock { $0 = 0 }
     }
 }

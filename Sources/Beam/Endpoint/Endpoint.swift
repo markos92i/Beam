@@ -85,9 +85,9 @@ public struct Endpoint<Success: Sendable, Failure: Sendable>: Sendable {
         try await call().stream()
     }
 
-    /// Opens a WebSocket whose messages are read as `Success`; drops are re-established per `RequestConfig.retry`.
-    public func connect() async throws(APIError<Failure>) -> WebSocketConnection<Success, Failure> {
-        try await call().connect()
+    /// Opens a WebSocket whose messages are read as `Success`, with the API's `SocketConfig` unless `socket` is given.
+    public func connect<Outgoing>(socket: SocketConfig? = nil) async throws(APIError<Failure>) -> WebSocketConnection<Success, Outgoing, Failure> {
+        try await call().connect(socket: socket ?? api.socket)
     }
 }
 

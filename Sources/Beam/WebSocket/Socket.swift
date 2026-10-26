@@ -14,14 +14,14 @@ import Foundation
 actor Socket {
     private let log: BeamLogger
     private let id: String
-    private let pingInterval: Duration?
+    private let config: SocketConfig
 
     private var task: URLSessionWebSocketTask?
 
     private var isClosed = false
 
     enum Ending: Sendable {
-        /// Server closed with 1000 or 1001.
+        /// The server closed with 1000.
         case closed
         case dropped(WebSocketError)
         /// `close`, the consumer stopping, or cancellation.
@@ -29,10 +29,10 @@ actor Socket {
     }
 
     /// `task` is already open so `send` can use it before serving starts.
-    init(log: BeamLogger, id: String, pingInterval: Duration?, task: URLSessionWebSocketTask) {
+    init(log: BeamLogger, id: String, config: SocketConfig, task: URLSessionWebSocketTask) {
         self.log = log
         self.id = id
-        self.pingInterval = pingInterval.flatMap { (.seconds(1) ... .seconds(300)).contains($0) ? $0 : nil }
+        self.config = config
         self.task = task
     }
 
@@ -41,11 +41,17 @@ actor Socket {
     /// Returns a refused upgrade's response for `Endpoint` to validate; throws only without a response.
     static func handshake(
         _ request: URLRequest,
+        config: SocketConfig,
         session: any SessionProtocol,
         log: BeamLogger,
         id: String
-    ) async throws(WebSocketError) -> (task: URLSessionWebSocketTask, response: HTTPURLResponse) {
+    ) async throws(WebSocketError) -> (task: URLSessionWebSocketTask, response: HTTPURLResponse, protocol: String?) {
+        var request = request
+        if !config.protocols.isEmpty {
+            request.setValue(config.protocols.joined(separator: ", "), forHTTPHeaderField: "Sec-WebSocket-Protocol")
+        }
         let task = session.webSocketTask(with: request)
+        task.maximumMessageSize = config.maxMessageSize
         let handshake = WebSocketHandshake()
         task.delegate = handshake // must be set before `resume()`
         if let url = request.url {
@@ -61,15 +67,15 @@ actor Socket {
 
         let response = task.response as? HTTPURLResponse
         switch outcome {
-        case .success:
+        case .success(let chosen):
             guard let response else {
                 task.cancel()
                 throw .network(URLError(.badServerResponse))
             }
-            return (task, response)
+            return (task, response, chosen)
         case .failure(let error):
             if let response, response.httpStatus != .switchingProtocols {
-                return (task, response)
+                return (task, response, nil)
             }
             throw .network(session.sessionDelegate.resolve(error, for: task))
         }
@@ -81,9 +87,10 @@ actor Socket {
 
     // MARK: - Serve
 
+    /// Hands each message to `deliver`, off the actor, until the connection ends.
     func serve(
         _ task: URLSessionWebSocketTask,
-        deliver: @Sendable (URLSessionWebSocketTask.Message) -> Bool
+        deliver: @escaping @concurrent @Sendable (URLSessionWebSocketTask.Message) async -> Void
     ) async -> Ending {
         guard !isClosed else {
             Self.abandon(task)
@@ -92,17 +99,14 @@ actor Socket {
         self.task = task
         defer { if self.task === task { self.task = nil } }
 
-        let pingInterval = self.pingInterval
-        let log = self.log
-        let id = self.id
-
+        let (log, id, config) = (log, id, config)
         let ending = await withTaskGroup(of: Bool.self, returning: Ending.self) { group in
-            if let pingInterval {
+            if let interval = config.pingInterval {
                 group.addTask {
-                    await Self.keepAlive(task, every: pingInterval, log: log, id: id)
+                    await Self.keepAlive(task, every: interval, pongTimeout: config.pongTimeout ?? interval, log: log, id: id)
                 }
             }
-            let ending = await receiveMessages(from: task, deliver: deliver)
+            let ending = await Self.receiveMessages(from: task, limit: config.maxMessageSize, log: log, id: id, deliver: deliver)
             // Before closing, so a ping released by the close isn't taken as failed.
             group.cancelAll()
             // Also releases a ping waiting for its pong.
@@ -118,9 +122,12 @@ actor Socket {
         return isClosed || Task.isCancelled ? .stopped : ending
     }
 
-    private func receiveMessages(
+    private static func receiveMessages(
         from task: URLSessionWebSocketTask,
-        deliver: @Sendable (URLSessionWebSocketTask.Message) -> Bool
+        limit: Int,
+        log: BeamLogger,
+        id: String,
+        deliver: @concurrent @Sendable (URLSessionWebSocketTask.Message) async -> Void
     ) async -> Ending {
         while true {
             let message: URLSessionWebSocketTask.Message
@@ -129,18 +136,14 @@ actor Socket {
                 message = try await withTaskCancellationHandler {
                     try await task.receive()
                 } onCancel: {
-                    Self.abandon(task)
+                    abandon(task)
                 }
             } catch {
-                switch task.closeCode {
-                case .invalid:
-                    return .dropped(.network(URLError(bridging: error)))
-                case .normalClosure, .goingAway:
-                    return .closed
-                case let code:
-                    let reason = task.closeReason.flatMap { String(data: $0, encoding: .utf8) }
-                    return .dropped(.closed(code: code, reason: reason))
-                }
+                let code = task.closeCode
+                guard code != .invalid else { return .dropped(drop(error, limit: limit)) }
+                let reason = task.closeReason.flatMap { String(data: $0, encoding: .utf8) }
+                log.log(.wsClose(id: id, code: code.rawValue, reason: reason))
+                return code == .normalClosure ? .closed : .dropped(.closed(code: code, reason: reason))
             }
 
             let (type, body): (String, LogEvent.Body) = switch message {
@@ -149,8 +152,17 @@ actor Socket {
             @unknown default: ("unknown", .none)
             }
             log.log(.wsReceive(id: id, type: type, body: body))
+            await deliver(message)
+        }
+    }
 
-            guard deliver(message) else { return .stopped }
+    /// URLSession reports a lost connection, and a message over its limit, as POSIX errors.
+    private static func drop(_ error: any Error, limit: Int) -> WebSocketError {
+        let posix = error as NSError
+        switch (posix.domain, posix.code) {
+        case (NSPOSIXErrorDomain, Int(EMSGSIZE)): return .messageTooLarge(limit: limit)
+        case (NSPOSIXErrorDomain, _): return .unexpectedDisconnection
+        default: return .network(URLError(bridging: error))
         }
     }
 
@@ -165,9 +177,7 @@ actor Socket {
     }
 
     private func send(_ message: URLSessionWebSocketTask.Message, type: String, logged body: Data) async throws(WebSocketError) {
-        guard let task, task.state == .running else {
-            throw .closed(code: .abnormalClosure, reason: nil)
-        }
+        guard let task, task.state == .running else { throw .notConnected }
         do {
             try await task.send(message)
         } catch {
@@ -196,8 +206,8 @@ actor Socket {
 
     // MARK: - Ping
 
-    /// Returns `true` if a ping failed; it then closes the socket so the receive loop ends.
-    private static func keepAlive(_ task: URLSessionWebSocketTask, every interval: Duration, log: BeamLogger, id: String) async -> Bool {
+    /// Returns `true` if the ping got no pong in time; it then closes the socket so the receive loop ends.
+    private static func keepAlive(_ task: URLSessionWebSocketTask, every interval: Duration, pongTimeout: Duration, log: BeamLogger, id: String) async -> Bool {
         while true {
             do {
                 try await Task.sleep(for: interval)
@@ -205,12 +215,26 @@ actor Socket {
                 return false
             }
 
-            let failed = await withCheckedContinuation { (pong: CheckedContinuation<Bool, Never>) in
-                task.sendPing { error in pong.resume(returning: error != nil) }
+            // `true` for a pong, `false` for an error, `nil` when it took longer than `pongTimeout`.
+            let pong = await withTaskGroup(of: Bool?.self) { group in
+                group.addTask {
+                    await withCheckedContinuation { continuation in
+                        task.sendPing { error in continuation.resume(returning: error == nil) }
+                    }
+                }
+                group.addTask {
+                    try? await Task.sleep(for: pongTimeout)
+                    return nil
+                }
+                let first = await group.next() ?? nil
+                group.cancelAll()
+                // Releases the ping still waiting for its pong.
+                if first == nil, !Task.isCancelled { task.cancel(with: .abnormalClosure, reason: nil) }
+                return first
             }
             // A ping released by our own closing of the socket is not a failure.
             guard !Task.isCancelled else { return false }
-            guard !failed else {
+            guard pong == true else {
                 task.cancel(with: .abnormalClosure, reason: nil)
                 return true
             }

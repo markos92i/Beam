@@ -200,6 +200,7 @@ struct WebSocketReconnectTests {
 
     // MARK: - Dropped connections (need internet: echo server)
 
+
     private func makeEchoEndpoint(retry: RetryPolicy, session: CountingWebSocketSession) -> Endpoint<String, Void> {
         Endpoint<String, Void>(
             session: session,
@@ -216,7 +217,7 @@ struct WebSocketReconnectTests {
     @Test
     func reconnectsAfterADropAndKeepsWorking() async throws {
         let session = CountingWebSocketSession()
-        let connection = try await makeEchoEndpoint(retry: .linear(delay: .milliseconds(100), maxAttempts: 3), session: session).connect()
+        let connection = try await makeEchoEndpoint(retry: .linear(delay: .milliseconds(100), maxAttempts: 3), session: session).connect(reconnecting: .linear(delay: .milliseconds(100), maxAttempts: 3))
         defer { Task { await connection.disconnect() } }
 
         var states = connection.state.makeAsyncIterator()
@@ -243,7 +244,7 @@ struct WebSocketReconnectTests {
     func givesUpReconnectingWhenTheServerStaysDown() async throws {
         let session = CountingWebSocketSession(unreachableAfterFirst: true)
         let retry = RetryPolicy.linear(delay: .milliseconds(100), maxAttempts: 2)
-        let connection = try await makeEchoEndpoint(retry: retry, session: session).connect()
+        let connection = try await makeEchoEndpoint(retry: retry, session: session).connect(reconnecting: retry)
 
         var states = connection.state.makeAsyncIterator()
         drop(session)
@@ -274,7 +275,7 @@ struct WebSocketReconnectTests {
     func disconnectDuringReconnectBackoffEndsImmediately() async throws {
         let session = CountingWebSocketSession(unreachableAfterFirst: true)
         let retry = RetryPolicy.linear(delay: .seconds(30), maxAttempts: 3)
-        let connection = try await makeEchoEndpoint(retry: retry, session: session).connect()
+        let connection = try await makeEchoEndpoint(retry: retry, session: session).connect(reconnecting: retry)
 
         drop(session)
 
@@ -299,7 +300,7 @@ struct WebSocketReconnectTests {
     @Test
     func consumerStoppingClosesTheSocket() async throws {
         let session = CountingWebSocketSession()
-        let connection = try await makeEchoEndpoint(retry: .none, session: session).connect()
+        let connection = try await makeEchoEndpoint(retry: .none, session: session).connect(reconnecting: .none)
         let socket = try #require(session.tasks.first)
 
         let consumer = Task { for try await _ in connection.messages {} }
@@ -334,5 +335,12 @@ struct WebSocketReconnectTests {
         }
         #expect((error as? APIError<Void>)?.kind == .missingToken)
         #expect(session.attempts == 0)
+    }
+}
+
+private extension Endpoint where Success == String, Failure == Void {
+    /// Connects with `retry` for the first connection and the reconnections alike.
+    func connect(reconnecting retry: RetryPolicy) async throws(APIError<Void>) -> WebSocketConnection<String, String, Void> {
+        try await connect(socket: SocketConfig(reconnect: retry))
     }
 }

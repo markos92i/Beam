@@ -13,37 +13,34 @@ import Foundation
 import Synchronization
 
 extension Call {
-    typealias Messages<Message: Sendable> = ThrowingStream<Message, APIError<Failure>>
     typealias StateContinuation = AsyncStream<WebSocketConnectionState>.Continuation
 
     // MARK: - Connect
 
-    func connect() async throws(APIError<Failure>) -> WebSocketConnection<Success, Failure> {
+    func connect<Outgoing>(socket socketConfig: SocketConfig) async throws(APIError<Failure>) -> WebSocketConnection<Success, Outgoing, Failure> {
         let decoding = endpoint.responseBody
-        let (stateStream, state) = AsyncStream<WebSocketConnectionState>.makeStream(
-            bufferingPolicy: .bufferingNewest(1)
-        )
+        let (stateStream, state) = AsyncStream<WebSocketConnectionState>.makeStream(bufferingPolicy: .bufferingNewest(1))
 
-        let first: URLSessionWebSocketTask
-        do throws(APIError<Failure>) {
-            first = try await openConnection(after: nil, state: state, accept: decoding.accept)
-        } catch {
-            state.yield(.disconnected(reason: .error(error.asVoid.kind)))
-            state.finish()
-            throw error
-        }
+        let first = try await openConnection(socket: socketConfig)
+        state.yield(.connected)
 
-        let socket = Socket(log: log, id: id, pingInterval: config.pingInterval, task: first)
-        let (messages, events) = Messages<Success>.makeStream()
+        let socket = Socket(log: log, id: id, config: socketConfig, task: first.task)
+        let (messages, events) = ThrowingStream<Success, APIError<Failure>>.makeStream()
         let run = Task(name: "Beam.WebSocket.run") { [self] in
-            await serve(from: first, on: socket, decoding: decoding, state: state, events: events)
+            await serve(from: first.task, on: socket, config: socketConfig, decoding: decoding, state: state, events: events)
         }
-        let connection = WebSocketConnection(messages: messages, state: stateStream, json: config.json, log: log, id: id, socket: socket, run: run)
-        // The consumer stopped iterating: close the socket (no-op if it already ended).
+        // The consumer stopped iterating, or released `messages`: close the socket. Capturing the
+        // connection here would keep `messages` alive forever.
         events.onTermination {
-            Task(name: "Beam.WebSocket.terminate") { await connection.close(.goingAway) }
+            Task(name: "Beam.WebSocket.terminate") {
+                await socket.close(code: .goingAway)
+                run.cancel()
+            }
         }
-        return connection
+        return WebSocketConnection(
+            messages: messages, state: stateStream, protocol: first.protocol,
+            json: config.json, jsonFrames: socketConfig.jsonFrames, log: log, id: id, transport: .socket(socket, run: run)
+        )
     }
 
     // MARK: - Connection loop
@@ -51,46 +48,51 @@ extension Call {
     private func serve<Message: Sendable>(
         from first: URLSessionWebSocketTask,
         on socket: Socket,
+        config socketConfig: SocketConfig,
         decoding: BodyDecoder<Message>,
         state: StateContinuation,
-        events: Messages<Message>.Continuation
+        events: ThrowingStream<Message, APIError<Failure>>.Continuation
     ) async {
         let clock = ContinuousClock()
-        let json = config.json
-        let undecodable = Undecodable()
+        let (json, log, id) = (config.json, log, id)
+        let budget = RetryBudget()
+        let progress = ConnectionProgress(state: state, budget: budget, maxAttempts: socketConfig.reconnect.maxAttempts)
         var task = first
 
         while true {
             let openedAt = clock.now
+            let delivered = Atomic(false)
             let ending = await socket.serve(task) { message in
                 do throws(CodingError) {
                     events.yield(try Self.decode(message, with: decoding, json: json))
-                    return true
+                    delivered.store(true, ordering: .relaxed)
                 } catch {
-                    undecodable.error.withLock { $0 = error }
-                    return false
+                    log.log(.codingFailed(id: id, what: "WebSocket message not decoded", detail: error.logDescription))
                 }
             }
 
-            let failure: APIError<Failure>
+            let drop: WebSocketError
             switch ending {
             case .closed:
                 return await finish(.closed, socket: socket, state: state, events: events)
             case .stopped:
-                // A malformed message ends the connection with its decoding error, never retried.
-                guard let error = undecodable.error.withLock({ $0 }) else {
-                    return await finish(.intentional, socket: socket, state: state, events: events)
-                }
-                failure = .coding(error)
+                return await finish(.intentional, socket: socket, state: state, events: events)
             case .dropped(let error):
-                failure = APIError(error)
+                drop = error
             }
+            let failure = APIError<Failure>(drop)
+            guard drop.reconnects(with: socketConfig) else {
+                return await finish(.error(failure.asVoid.kind), failure: failure, socket: socket, state: state, events: events)
+            }
+            // A connection that delivered something, or held for a handshake's timeout, starts the budget over.
+            if delivered.load(ordering: .relaxed) || clock.now - openedAt >= config.timeout { budget.reset() }
 
             do throws(APIError<Failure>) {
-                task = try await openConnection(after: (failure, clock.now - openedAt), state: state, accept: decoding.accept)
+                task = try await openConnection(socket: socketConfig, after: (failure, clock.now - openedAt), budget: budget, progress: progress).task
             } catch {
-                // Cancelled: `disconnect()` was called or the consumer stopped iterating.
-                return await finish(Task.isCancelled ? .intentional : .error(error.asVoid.kind), failure: Task.isCancelled ? nil : error, socket: socket, state: state, events: events)
+                // Cancelled: `disconnect()` was called, or `messages` was released.
+                let cancelled = Task.isCancelled
+                return await finish(cancelled ? .intentional : .error(error.asVoid.kind), failure: cancelled ? nil : error, socket: socket, state: state, events: events)
             }
         }
     }
@@ -100,7 +102,7 @@ extension Call {
         failure: APIError<Failure>? = nil,
         socket: Socket,
         state: StateContinuation,
-        events: Messages<Message>.Continuation
+        events: ThrowingStream<Message, APIError<Failure>>.Continuation
     ) async {
         await socket.end()
         state.yield(.disconnected(reason: reason))
@@ -110,33 +112,41 @@ extension Call {
 
     // MARK: - Opening
 
-    /// When re-establishing, the dropped connection (`drop`) counts as the first attempt.
+    /// The first connection retries per `RequestConfig.retry`; a reconnection per
+    /// `SocketConfig.reconnect`, with `drop` as its first failed attempt.
     func openConnection(
-        after drop: (failure: APIError<Failure>, lifetime: Duration)?,
-        state: StateContinuation,
-        accept: ContentType?
-    ) async throws(APIError<Failure>) -> URLSessionWebSocketTask {
-        let progress = ConnectionProgress(state: state, maxAttempts: config.retry.maxAttempts)
+        socket socketConfig: SocketConfig,
+        after drop: (failure: APIError<Failure>, lifetime: Duration)? = nil,
+        budget: RetryBudget = RetryBudget(),
+        progress: ConnectionProgress? = nil
+    ) async throws(APIError<Failure>) -> (task: URLSessionWebSocketTask, protocol: String?) {
         let previous = drop.map { drop in
             (error: drop.failure, attempt: EndpointContext.Attempt(status: HTTPStatus.switchingProtocols.rawValue, duration: drop.lifetime))
         }
         // Closed if the call fails after its upgrade.
-        var opened: URLSessionWebSocketTask?
+        var opened: (task: URLSessionWebSocketTask, protocol: String?)?
 
         do throws(APIError<Failure>) {
-            return try await perform(.connection, accept: accept, after: previous, observers: [progress]) { request, _ throws(APIError<Failure>) in
-                opened.map(Socket.abandon)
-                let (task, response): (URLSessionWebSocketTask, HTTPURLResponse)
-                do throws(WebSocketError) { (task, response) = try await Socket.handshake(request, session: session, log: log, id: id) } catch { throw APIError(error) }
-                opened = task
-                let upgraded = response.httpStatus.succeeds(for: .connection)
-                return Response(http: response, body: upgraded ? .stream : .data(Data()))
+            return try await perform(
+                .connection, after: previous, retry: drop == nil ? nil : socketConfig.reconnect,
+                budget: budget, observers: progress.map { [$0] } ?? []
+            ) { request, _ throws(APIError<Failure>) in
+                opened.map { Socket.abandon($0.task) }
+                let handshake: (task: URLSessionWebSocketTask, response: HTTPURLResponse, protocol: String?)
+                do throws(WebSocketError) {
+                    handshake = try await Socket.handshake(request, config: socketConfig, session: session, log: log, id: id)
+                } catch {
+                    throw APIError(error)
+                }
+                opened = (handshake.task, handshake.protocol)
+                let upgraded = handshake.response.httpStatus.succeeds(for: .connection)
+                return Response(http: handshake.response, body: upgraded ? .stream : .data(Data()))
             } output: { _ throws(APIError<Failure>) in
                 guard let opened else { throw .connection(.unexpectedDisconnection) }
                 return opened
             }
         } catch {
-            opened.map(Socket.abandon)
+            opened.map { Socket.abandon($0.task) }
             throw error
         }
     }
@@ -152,22 +162,18 @@ extension Call {
     }
 }
 
-private final class Undecodable: Sendable {
-    let error = Mutex<CodingError?>(nil)
-}
-
 // MARK: - ConnectionProgress
 
+/// Reports a reconnection's progress on the connection's `state`.
 struct ConnectionProgress: Monitor {
     let state: AsyncStream<WebSocketConnectionState>.Continuation
+    let budget: RetryBudget
     let maxAttempts: Int
 
-    func didSend(_ request: URLRequest, context: EndpointContext) {
-        state.yield(.connecting)
-    }
-
     func willRetry(after error: APIError<Void>, delay: Duration, context: EndpointContext) {
-        state.yield(.reconnecting(attempt: context.attempt + 1, maxAttempts: maxAttempts))
+        // A 401 repeats once to refresh credentials, outside the reconnection policy.
+        guard error.status != .unauthorized else { return }
+        state.yield(.reconnecting(attempt: budget.spent, maxAttempts: maxAttempts))
     }
 
     func didSucceed(_ response: Response, context: EndpointContext) {
