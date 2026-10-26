@@ -156,7 +156,16 @@ The path must be a literal. A path without a leading `/` or with spaces, `<`, `>
 | `.linear(delay:maxAttempts:)` | fixed delay |
 | `.exponential(base:maxDelay:maxAttempts:)` | doubling delay, capped |
 
-Only transient failures are retried: 5xx statuses, timeouts, lost or missing connection, and WebSocket handshakes that time out. A `401` is handled by [auth](#authentication), not by the policy.
+Only transient failures are retried, and only when repeating them is safe ([RFC 9110 §9.2.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.2)):
+
+| Failure | GET, HEAD, OPTIONS, TRACE, PUT, DELETE | POST, PATCH |
+|---|---|---|
+| No connection (`notConnectedToInternet`): nothing left the device | Retried | Retried |
+| Timeout, lost connection: the server may have applied it | Retried | Not retried |
+| `408`, `500`, `502`, `503`, `504`, Cloudflare's `520`–`524` | Retried | Not retried |
+| Other statuses (`501`, `505`, `525`…, any other 4xx) | Not retried | Not retried |
+
+POST and PATCH aren't idempotent: repeating one the server already applied would apply it twice. WebSocket handshakes (a GET) that time out are retried too. A `401` is handled by [auth](#authentication), not by the policy.
 
 ### Parameter roles
 

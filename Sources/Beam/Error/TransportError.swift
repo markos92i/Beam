@@ -46,5 +46,8 @@ extension URLError {
         }
     }
 
+    /// Failed before anything left the device, so the server can't have applied it.
+    var wasNeverSent: Bool { code == .notConnectedToInternet }
+
     var logDescription: String { localizedDescription }
 }

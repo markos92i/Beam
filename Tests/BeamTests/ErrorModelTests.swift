@@ -190,7 +190,7 @@ struct ErrorModelTests {
         let error: APIError<Void> = .connection(.sendFailed(URLError(.networkConnectionLost)))
         #expect(error == .sendFailed)
         #expect(error.id == 26)
-        #expect(!error.isRetryable)
+        #expect(!error.isRetryable(for: .get))
     }
 }
 
@@ -205,18 +205,56 @@ struct HTTPStatusTests {
         #expect(status.description == "\(code) \(status.name)")
     }
 
-    /// Cloudflare's codes are server errors: retried like any 5xx. As `.undefined` they weren't.
-    @Test(arguments: [HTTPStatus.webServerReturnedUnknownError, .connectionTimedOut, .timeoutOccurred, .originDNSError])
-    func cloudflareCodesAreRetriedServerErrors(_ status: HTTPStatus) {
+    /// Cloudflare's "the origin didn't answer" codes are retried like a 502/504. As `.undefined` they weren't.
+    @Test(arguments: [HTTPStatus.webServerReturnedUnknownError, .webServerIsDown, .connectionTimedOut, .originIsUnreachable, .timeoutOccurred])
+    func cloudflareGatewayCodesAreRetried(_ status: HTTPStatus) {
         let error: APIError<Void> = .http(status: status)
         #expect(status.type == .serverError)
-        #expect(error.isRetryable)
+        #expect(error.isRetryable(for: .get))
+    }
+
+    /// Server errors that repeat the same answer: not implemented, protocol or SSL configuration.
+    @Test(arguments: [HTTPStatus.notImplemented, .HTTPVersionNotSupported, .networkAuthenticationRequired,
+                      .SSLHandshakeFailed, .invalidSSLCertificate, .railgunError, .originDNSError])
+    func permanentServerErrorsAreNotRetried(_ status: HTTPStatus) {
+        let error: APIError<Void> = .http(status: status)
+        #expect(status.type == .serverError)
+        #expect(!error.isRetryable(for: .get))
     }
 
     @Test
-    func tooEarlyIsAClientErrorNotRetried() {
-        let error: APIError<Void> = .http(status: .tooEarly)
-        #expect(HTTPStatus.tooEarly.type == .clientError)
-        #expect(!error.isRetryable)
+    func requestTimeoutIsTheOnlyRetriedClientError() {
+        #expect(APIError<Void>.http(status: .requestTimeout).isRetryable(for: .get))
+        #expect(!APIError<Void>.http(status: .tooEarly).isRetryable(for: .get))
+        #expect(!APIError<Void>.http(status: .tooManyRequests).isRetryable(for: .get))
+    }
+}
+
+// MARK: - Retries by method
+
+/// RFC 9110 §9.2.2: what the server may have applied is repeated only for idempotent methods.
+@Suite
+struct RetryClassificationTests {
+    static let idempotent: [HTTPMethod] = [.get, .head, .options, .trace, .put, .delete]
+    static let nonIdempotent: [HTTPMethod] = [.post, .patch]
+
+    static let mayHaveBeenApplied: [APIError<Void>] = [
+        .http(status: .internalServerError), .http(status: .serviceUnavailable), .http(status: .requestTimeout),
+        .transport(.network(URLError(.timedOut))), .transport(.network(URLError(.networkConnectionLost)))
+    ]
+
+    @Test(arguments: idempotent, mayHaveBeenApplied)
+    func idempotentMethodsRepeatWhatMayHaveBeenApplied(_ method: HTTPMethod, _ error: APIError<Void>) {
+        #expect(error.isRetryable(for: method))
+    }
+
+    @Test(arguments: nonIdempotent, mayHaveBeenApplied)
+    func nonIdempotentMethodsDoNotRepeatWhatMayHaveBeenApplied(_ method: HTTPMethod, _ error: APIError<Void>) {
+        #expect(!error.isRetryable(for: method))
+    }
+
+    @Test(arguments: idempotent + nonIdempotent)
+    func everyMethodRepeatsWhatNeverLeftTheDevice(_ method: HTTPMethod) {
+        #expect(APIError<Void>.transport(.network(URLError(.notConnectedToInternet))).isRetryable(for: method))
     }
 }

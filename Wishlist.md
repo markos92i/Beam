@@ -6,7 +6,7 @@ Features pospuestas para futuras versiones. Cada entrada incluye contexto sufici
 
 ## Retry condicional personalizable
 
-Actualmente `isRetryable` está hardcoded en `TransportError`. Permitir un closure de decisión en `RetryPolicy` para que el consumidor defina qué errores reintentar:
+Actualmente la decisión está fija en `APIError.isRetryable(for:)` (método × error, ver README «Retry policies»). Permitir un closure de decisión en `RetryPolicy` para que el consumidor defina qué errores reintentar:
 
 ```swift
 RetryPolicy(
@@ -18,9 +18,23 @@ RetryPolicy(
 
 ---
 
-## 429 Rate Limit awareness
+## `Retry-After` en 429 y 503
 
-Detección automática de respuestas `429 Too Many Requests` con lectura del header `Retry-After`. Back-off adaptativo sin consumir intentos del retry policy configurado. El endpoint esperaría el tiempo indicado por el servidor antes de reintentar.
+Hoy un `429 Too Many Requests` no se reintenta nunca, y un `503` se reintenta (solo en métodos idempotentes) con el delay de la `RetryPolicy`, ignorando el header. Leer `Retry-After` ([RFC 9110 §10.2.3](https://www.rfc-editor.org/rfc/rfc9110.html#section-10.2.3): segundos o fecha HTTP) y esperar lo que pide el servidor antes de reintentar.
+
+A decidir:
+- Tope de espera: un `Retry-After: 3600` no debe dejar una llamada colgada una hora; por encima del tope, fallar con el error.
+- Si consume intentos de la policy o va aparte (como el repeat del 401).
+- Si un `429` se reintenta también en POST/PATCH: el servidor no lo procesó, pero RFC 6585 §4 no lo garantiza explícitamente. OkHttp solo repite un `503` con `Retry-After: 0`.
+- Cómo lo ven los monitors (`willRetry` con el delay del servidor).
+
+---
+
+## Reintentar un POST idempotente por diseño
+
+Desde Oct 2026 un POST/PATCH que el servidor pudo aplicar (timeout, conexión perdida, 5xx) no se reintenta ([RFC 9110 §9.2.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.2), [Apple QA1941](https://developer.apple.com/library/archive/qa/qa1941/_index.html)). La RFC sí lo permite cuando el cliente sabe «por diseño o configuración» que esa petición es segura de repetir, p. ej. una ruta que envía un `Idempotency-Key` y el backend deduplica.
+
+Opción: que una ruta lo declare, p. ej. `@Post("/payments", retry: .resilient, idempotent: true)` o una propiedad en `RetryPolicy`, y que `isRetryable(for:)` lo trate como idempotente. Hoy no hay ningún caso en la app que lo necesite: añadirlo cuando aparezca uno.
 
 ---
 

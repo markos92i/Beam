@@ -67,7 +67,7 @@ extension Call {
 
                 guard !Task.isCancelled else { throw fail(.cancelled, finished) }
                 // The caller already decided `previous` is worth repeating (a dropped connection).
-                let repeatable = error.isRetryable || (previous != nil && attempts.count == 1)
+                let repeatable = error.isRetryable(for: route.method) || (previous != nil && attempts.count == 1)
 
                 if error.status == .unauthorized, let auth, !refreshedAuth {
                     // Refresh and repeat once, outside the retry policy.

@@ -111,6 +111,78 @@ struct RetryTests {
         }
     }
 
+    /// RFC 9110 §9.2.2: a POST the server may have applied isn't repeated (it could be applied twice).
+    @Test(arguments: [HTTPMethod.post, .patch])
+    func nonIdempotentCallIsNotRetriedOnServerError(_ method: HTTPMethod) async throws {
+        let counter = AtomicCounter()
+
+        let session = MockSession({ (request) throws(URLError) in
+            await counter.increment()
+            let response = HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
+            return (Data(), response)
+        })
+
+        let endpoint = Endpoint<ResponseMock, Void>(
+            session: session,
+            config: RequestConfig(retry: RetryPolicy(maxAttempts: 2)),
+            api: APIRequest(method: method, host: "https://base-url.com", path: "/retry")
+        )
+
+        do {
+            _ = try await endpoint.data()
+            Issue.record("Expected the 500")
+        } catch {
+            #expect(error.status == .internalServerError)
+            #expect(await counter.value == 1)
+        }
+    }
+
+    @Test
+    func nonIdempotentCallIsNotRetriedOnTimeout() async throws {
+        let counter = AtomicCounter()
+
+        let session = MockSession({ (_) throws(URLError) in
+            await counter.increment()
+            throw URLError(.timedOut)
+        })
+
+        let endpoint = Endpoint<ResponseMock, Void>(
+            session: session,
+            config: RequestConfig(retry: RetryPolicy(maxAttempts: 2)),
+            api: APIRequest(method: .patch, host: "https://base-url.com", path: "/retry")
+        )
+
+        do {
+            _ = try await endpoint.data()
+            Issue.record("Expected the timeout")
+        } catch {
+            #expect(await counter.value == 1)
+        }
+    }
+
+    /// Without connection nothing reached the server, so even a POST is safe to repeat.
+    @Test
+    func nonIdempotentCallIsRetriedWhenItNeverLeftTheDevice() async throws {
+        let counter = AtomicCounter()
+        let expectedData = json(ResponseMock(id: "sent", value: 1))
+
+        let session = MockSession({ (request) throws(URLError) in
+            if await counter.increment() == 1 { throw URLError(.notConnectedToInternet) }
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (expectedData, response)
+        })
+
+        let endpoint = Endpoint<ResponseMock, Void>(
+            session: session,
+            config: RequestConfig(retry: RetryPolicy(maxAttempts: 2)),
+            api: APIRequest(method: .post, host: "https://base-url.com", path: "/retry")
+        )
+
+        let result = try await endpoint.data()
+        #expect(result.id == "sent")
+        #expect(await counter.value == 2)
+    }
+
     @Test
     func retryOnUnauthorizedInvalidatesAuth() async throws {
         let counter = AtomicCounter()

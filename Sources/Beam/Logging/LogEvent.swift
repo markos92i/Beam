@@ -110,7 +110,7 @@ extension LogEvent {
             "􀺾 \(detail)"
 
         case .undecodedErrorBody(let id, let type, let detail):
-            "􀇿 \(id)\terror body is not \(type): the error has no body"
+            "􀇿 \(id)\terror body is not \(type): kept only in rawBody"
             "􀺾 \(detail)"
 
         case .codingFailed(let id, let what, let detail):

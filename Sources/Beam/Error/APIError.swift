@@ -209,11 +209,12 @@ extension APIErrorKind {
 // MARK: - Classification
 
 extension APIError {
+    /// RFC 9110 §9.2.2: a request the server may have applied is repeated only if `method` is idempotent.
     /// A 401 isn't retryable here: auth refreshes and repeats it on its own.
-    var isRetryable: Bool {
+    func isRetryable(for method: HTTPMethod) -> Bool {
         switch self {
-        case .http(let status, _, _): status.type == .serverError
-        case .transport(.network(let error)): error.isTransient
+        case .http(let status, _, _): method.isIdempotent && status.isTransient
+        case .transport(.network(let error)): error.wasNeverSent || (method.isIdempotent && error.isTransient)
         case .connection(let error): error.isRetryable
         default: false
         }

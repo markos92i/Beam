@@ -28,7 +28,8 @@ private func uploadEndpoint(
         session: session,
         auth: auth,
         config: RequestConfig(retry: retry),
-        api: APIRequest(method: .post, host: host, path: "/upload")
+        // PUT: idempotent, so the tests that need a retry get one (a POST that may have been applied isn't repeated).
+        api: APIRequest(method: .put, host: host, path: "/upload")
     )
 }
 
@@ -274,7 +275,7 @@ struct ResumedCallTests {
             session: session,
             config: RequestConfig(retry: .linear(delay: .zero, maxAttempts: 1)),
             interceptors: [RejectingFirst()],
-            api: APIRequest(method: .post, host: host, path: "/upload")
+            api: APIRequest(method: .put, host: host, path: "/upload")
         )
 
         _ = try await endpoint.uploadTask(dummy).start(resumeFrom: Data("resume".utf8))

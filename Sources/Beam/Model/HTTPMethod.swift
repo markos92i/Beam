@@ -18,4 +18,12 @@ public enum HTTPMethod: String, Sendable, CustomStringConvertible {
     case trace = "TRACE"
     
     public var description: String { rawValue }
+
+    /// RFC 9110 §9.2.2: sending it twice has the same effect as once.
+    var isIdempotent: Bool {
+        switch self {
+        case .get, .head, .options, .trace, .put, .delete: true
+        case .post, .patch: false
+        }
+    }
 }

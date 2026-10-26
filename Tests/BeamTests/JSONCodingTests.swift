@@ -109,7 +109,8 @@ struct BodyEncodingTests {
         let endpoint = Endpoint<ResponseMock, Void>(
             session: session,
             config: RequestConfig(retry: .linear(delay: .zero, maxAttempts: 2)),
-            api: APIRequest(method: .post, host: "https://base-url.com", path: "/a", body: .json(CountingBody(count: count)))
+            // PUT: idempotent, so the 503s are retried.
+            api: APIRequest(method: .put, host: "https://base-url.com", path: "/a", body: .json(CountingBody(count: count)))
         )
 
         _ = try await endpoint.data()

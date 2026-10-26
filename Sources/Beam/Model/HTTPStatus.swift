@@ -118,6 +118,18 @@ public enum HTTPStatus: Int, Error, CustomStringConvertible {
     case railgunError = 527
     case originDNSError = 530
 
+    /// A failure another attempt can fix: a timeout, an overloaded server, or a gateway (Cloudflare's too)
+    /// that couldn't get an answer from the origin. 501, 505 or an SSL misconfiguration (525, 526) can't.
+    var isTransient: Bool {
+        switch self {
+        case .requestTimeout, .internalServerError, .badGateway, .serviceUnavailable, .gatewayTimeout,
+             .webServerReturnedUnknownError, .webServerIsDown, .connectionTimedOut, .originIsUnreachable, .timeoutOccurred:
+            true
+        default:
+            false
+        }
+    }
+
     /// The class the status belongs to.
     public var type: ResponseType {
         switch self.rawValue {
