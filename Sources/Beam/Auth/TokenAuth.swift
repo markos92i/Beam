@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Logy
 
 /// Auth provider with automatic token refresh, deduplication, and state management.
 public actor TokenAuth: AuthProtocol {

@@ -1,6 +1,15 @@
 {
-  "originHash" : "a0765a45951c331d7896cf9efff575404c55ff878338fd1ba6f932e803fa719f",
+  "originHash" : "57025062ab3b8eaf7a31d4b81a785baa6f59da5da56d0fb0f313ca31c2e76fbf",
   "pins" : [
+    {
+      "identity" : "logy",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/markos92i/Logy.git",
+      "state" : {
+        "revision" : "48be637ff416b2c343d500274d59492b1f876677",
+        "version" : "1.0.1"
+      }
+    },
     {
       "identity" : "swift-syntax",
       "kind" : "remoteSourceControl",

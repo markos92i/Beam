@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Logy
 
 /// Failures of the WebSocket transport (`Socket`).
 public enum WebSocketError: Error, LoggableError {

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Logy
 
 /// Transport of one call across all its attempts; validation, retries and decoding belong to `Call`.
 actor Client {
@@ -60,9 +61,10 @@ actor Client {
         for request: URLRequest,
         operation: (TaskTracker) async throws(TransportError) -> sending (T, URLResponse)
     ) async throws(TransportError) -> (T, HTTPURLResponse) {
-        let start = Date()
-        let signpostState = log.beginRequest(id: id, method: request.httpMethod ?? "", path: request.url?.path() ?? "")
-        log.log(.request(id: id, method: request.httpMethod ?? "", url: request.url!, headers: request.allHTTPHeaderFields, body: request.httpBody))
+        let method = request.httpMethod ?? ""
+        // The path may carry identifiers: Logy keeps `detail` private outside Debug.
+        let interval = log.begin("request", "\(method) [\(id)]", detail: request.url?.path() ?? "", on: .http)
+        log.log(.request(id: id, method: method, url: request.url!, headers: request.allHTTPHeaderFields, body: request.httpBody))
 
         let tracker = TaskTracker(progress: progress)
         current = tracker
@@ -78,12 +80,12 @@ actor Client {
         } catch {
             let error = resolve(error, of: tracker.task)
             keepResumeData(from: error)
-            log.endRequest(signpostState, status: error.urlError?.code == .cancelled ? -2 : -1)
+            log.end(interval, error.urlError?.code == .cancelled ? "-2" : "-1")
             throw error
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            log.endRequest(signpostState, status: 0)
+            log.end(interval, "0")
             throw .network(URLError(.badServerResponse))
         }
 
@@ -91,8 +93,8 @@ actor Client {
         let body: LogEvent.Body = if let data = value as? Data { .data(data) }
                                   else if let file = value as? URL { .file(name: httpResponse.suggestedFilename, bytes: try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) }
                                   else { .none }
-        log.log(.response(id: id, status: httpResponse.statusCode, headers: httpResponse.allHeaderFields as? [String: String] ?? [:], body: body, start: start))
-        log.endRequest(signpostState, status: httpResponse.statusCode)
+        let elapsed = log.end(interval, "\(httpResponse.statusCode)")
+        log.log(.response(id: id, status: httpResponse.statusCode, headers: httpResponse.allHeaderFields as? [String: String] ?? [:], body: body, elapsed: elapsed))
 
         return (value, httpResponse)
     }

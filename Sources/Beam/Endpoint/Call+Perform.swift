@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Logy
 import Synchronization
 
 enum Payload: Sendable {

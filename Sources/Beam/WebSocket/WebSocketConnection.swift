@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Logy
 
 /// A live WebSocket connection returned by `@Socket` methods: `Incoming` messages are
 /// received, `Outgoing` ones sent. Releasing it and its `messages` closes the socket.

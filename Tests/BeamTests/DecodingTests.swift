@@ -245,7 +245,7 @@ struct DecodingTests {
     func anUndecodedErrorBodyIsAWarning() {
         let event = LogEvent.undecodedErrorBody(id: "a1", type: "ErrorDto", detail: "keyNotFound code")
         let rendered = event.rendered(bodies: false)
-        #expect(event.meta.level == .warning)
+        #expect(event.level == .warning)
         #expect(rendered.contains("ErrorDto"))
         // The event only exists when there IS a body; it must not claim otherwise.
         #expect(!rendered.contains("no body"))

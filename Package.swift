@@ -16,6 +16,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "604.0.0"),
+        .package(url: "https://github.com/markos92i/Logy.git", from: "1.0.0"),
     ],
     targets: [
         // Macro implementation (compiler plugin)
@@ -30,13 +31,19 @@ let package = Package(
         // Main library
         .target(
             name: "Beam",
-            dependencies: ["BeamMacros"]
+            dependencies: [
+                "BeamMacros",
+                .product(name: "Logy", package: "Logy"),
+            ]
         ),
 
         // Tests
         .testTarget(
             name: "BeamTests",
-            dependencies: ["Beam"]
+            dependencies: [
+                "Beam",
+                .product(name: "Logy", package: "Logy"),
+            ]
         ),
         .testTarget(
             name: "BeamMacrosTests",

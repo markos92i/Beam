@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Logy
 import Testing
 @testable import Beam
 

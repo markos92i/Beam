@@ -6,11 +6,30 @@
 //
 
 import Foundation
+import Logy
 
-enum LogEvent: Sendable {
+// MARK: - Subsystem and channels
+
+extension LogSubsystem {
+    /// Beam's logs (`com.beam`). `LogSubsystem.beam.level = .off` silences all of Beam.
+    public static let beam = LogSubsystem("com.beam")
+}
+
+extension LogChannel {
+    static let http = LogChannel(.beam, "http", signposts: .ownCategory)
+    static let websocket = LogChannel(.beam, "websocket")
+    static let auth = LogChannel(.beam, "auth")
+    static let error = LogChannel(.beam, "error")
+}
+
+typealias BeamLogger = Logy<LogEvent>
+
+// MARK: - Events
+
+enum LogEvent: LogEntry {
     // MARK: - HTTP
     case request(id: String, method: String, url: URL, headers: [String: String]?, body: Data?)
-    case response(id: String, status: Int, headers: [String: String], body: Body, start: Date)
+    case response(id: String, status: Int, headers: [String: String], body: Body, elapsed: Duration)
     case retry(id: String, attempt: Int, max: Int, delay: Duration)
     case error(id: String, icon: String, name: String, detail: String, attempt: Int)
 
@@ -46,64 +65,52 @@ extension LogEvent {
     }
 }
 
+// MARK: - Level and channel
+
 extension LogEvent {
-    struct EventMeta: Sendable {
-        let level: LogLevel
-        let category: LogCategory
+    var level: LogLevel {
+        switch self {
+        case .request, .retry, .wsOpen, .wsClose: .info
+        case .response(_, let status, _, _, _): status >= 500 ? .warning : .info
+        case .error, .codingFailed: .error
+        case .wsSend, .wsReceive, .wsPing: .debug
+        case .wsReconnect, .undecodedErrorBody: .warning
+        case .auth(_, _, _, let level): level
+        case .backgroundFinished(_, _, _, let status, let failure):
+            failure == nil && (200..<300).contains(status ?? 0) ? .info : .warning
+        }
     }
 
-    var meta: EventMeta {
+    var channel: LogChannel {
         switch self {
-        case .request:      .init(level: .info, category: .http)
-        case .response(_, let status, _, _, _): .init(level: status >= 500 ? .warning : .info, category: .http)
-        case .retry:        .init(level: .info, category: .http)
-        case .error:        .init(level: .error, category: .error)
-        case .wsOpen:       .init(level: .info, category: .websocket)
-        case .wsSend:       .init(level: .debug, category: .websocket)
-        case .wsReceive:    .init(level: .debug, category: .websocket)
-        case .wsClose:      .init(level: .info, category: .websocket)
-        case .wsPing:       .init(level: .debug, category: .websocket)
-        case .wsReconnect:  .init(level: .warning, category: .websocket)
-        case .auth(_, _, _, let level): .init(level: level, category: .auth)
-        case .undecodedErrorBody: .init(level: .warning, category: .http)
-        case .codingFailed: .init(level: .error, category: .error)
-        case .backgroundFinished(_, _, _, let status, let failure):
-            .init(level: failure == nil && (200..<300).contains(status ?? 0) ? .info : .warning, category: .http)
+        case .request, .response, .retry, .undecodedErrorBody, .backgroundFinished: .http
+        case .wsOpen, .wsSend, .wsReceive, .wsClose, .wsPing, .wsReconnect: .websocket
+        case .auth: .auth
+        case .error, .codingFailed: .error
         }
     }
 }
 
-// MARK: - Category
-extension LogEvent {
-    enum LogCategory {
-        case http, websocket, auth, error
-    }
-}
-
 // MARK: - Rendering
-extension LogEvent {
-    func rendered(bodies: Bool) -> String {
-        var lines = lines(bodies: bodies)
-        if !lines.isEmpty { lines[0] = LogColumns.align(lines[0]) }
-        return lines.joined(separator: "\n")
-    }
 
+extension LogEvent {
     @LogBuilder
-    private func lines(bodies: Bool) -> [String] {
+    func lines(bodies: Bool) -> [String] {
         switch self {
         // MARK: - HTTP
         case .request(let id, let method, let url, let headers, let body):
             "􀁶 \(id)\t􀋧 \(method)\t\(url.protocolLabel)\t\(url.hostLabel)\t\(url.pathLabel)\t\(url.queryLabel ?? "")"
             "􁒠 \(Self.headerDescription(headers))"
             "􁒡 \(Self.bodyDescription(.from(body), full: bodies))"
-            
-        case .response(let id, let status, let headers, let body, let start):
-            "􀁸 \(id)\t\(status.statusIcon) \(status)\t􀐫 \(start.elapsed)"
+
+        // An error response always shows its body.
+        case .response(let id, let status, let headers, let body, let elapsed):
+            "􀁸 \(id)\t\(status.statusIcon) \(status)\t􀐫 \(elapsed.logFormatted)"
             "􁒠 \(Self.headerDescription(headers))"
             "􁒡 \(Self.bodyDescription(body, full: bodies || status >= 400))"
 
         case .retry(let id, let attempt, let max, let delay):
-            "􀅈 \(id)\tretry \(attempt)/\(max)\tdelay: \(delay.formatted)"
+            "􀅈 \(id)\tretry \(attempt)/\(max)\tdelay: \(delay.logFormatted)"
 
         case .error(let id, let icon, let name, let detail, let attempt):
             "􀇾 \(id)\t\(icon) \(name)\tattempt \(attempt)"
@@ -137,7 +144,7 @@ extension LogEvent {
             "􀒙 \(id)\tpong"
 
         case .wsReconnect(let id, let attempt, let max, let delay):
-            "􀅈 \(id)\treconnect \(attempt)/\(max)\tdelay: \(delay.formatted)"
+            "􀅈 \(id)\treconnect \(attempt)/\(max)\tdelay: \(delay.logFormatted)"
 
         // MARK: - Auth
         case .auth(let type, let name, let detail, _):
@@ -173,7 +180,7 @@ extension LogEvent {
     private static func bodyDescription(_ body: Body, full: Bool) -> String {
         switch body {
         case .data(let data) where !data.isEmpty:
-            if full, let text = data.isJSON ? data.prettyJSON : String(data: data, encoding: .utf8) {
+            if full, let text = data.logText {
                 return "\n" + text
             }
             return "\(data.count.byteFormatted)"
@@ -183,10 +190,7 @@ extension LogEvent {
             return "􀓔"
         }
     }
-
 }
-
-
 
 // MARK: - Content Type
 

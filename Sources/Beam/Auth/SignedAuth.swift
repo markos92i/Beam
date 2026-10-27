@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Logy
 
 /// Auth provider for HMAC or signature-based authentication.
 public actor SignedAuth: AuthProtocol {

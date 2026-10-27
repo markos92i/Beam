@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Logy
 
 /// Logs failures: the call already succeeded, so they never reach the monitors.
 struct ElementDecoder<Element: Sendable>: Sendable {

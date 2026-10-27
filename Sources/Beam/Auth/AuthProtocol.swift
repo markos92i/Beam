@@ -7,7 +7,7 @@
 
 import Foundation
 
-/// An authentication provider. Beam's providers log with ``BeamLogger/level``, not `@API(logLevel:)`.
+/// An authentication provider. Beam's providers log with the level of `LogSubsystem.beam`, not `@API(logLevel:)`.
 public protocol AuthProtocol: Sendable {
     /// Adds credentials to the outgoing request.
     func authenticate(request: inout URLRequest) async throws(AuthError)

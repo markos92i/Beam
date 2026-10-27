@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import Logy
 
 actor Socket {
     private let log: BeamLogger

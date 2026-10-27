@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Logy
 
 /// Auth provider for static credentials that never expire (API keys, fixed tokens).
 public actor StaticAuth: AuthProtocol {

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Logy
 import Synchronization
 
 /// The delegate of every Beam session: server trust, delegate-driven transfers and,
@@ -36,7 +37,7 @@ public final class SessionDelegate: NSObject, Sendable {
         self.store = store
     }
 
-    /// A session serves many APIs, so it logs with the global ``BeamLogger/level``.
+    /// A session serves many APIs, so it logs with the level of `LogSubsystem.beam`.
     private static let logger = BeamLogger()
 
     // MARK: - Waiting for a task

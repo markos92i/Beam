@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import os
+import Logy
 import Testing
 @testable import Beam
 
@@ -19,16 +19,19 @@ struct LoggingTests {
             api: APIRequest(method: .get, host: "https://base-url.com", path: "/a")
         )
         let call = endpoint.call()
-        #expect(call.client.log.effectiveLevel == .error)
-        #expect(call.log.effectiveLevel == .error)
+        #expect(call.client.log.level == .error)
+        #expect(call.log.level == .error)
     }
 
     @Test
-    func levelsMapToTheSystemTypesAsOSLoggerDoes() {
-        #expect(LogLevel.warning.osLogType == .error)
-        #expect(LogLevel.error.osLogType == .error)
-        #expect(LogLevel.info.osLogType == .info)
-        #expect(LogLevel.debug.osLogType == .debug)
+    func eachKindOfEventGoesToItsChannel() {
+        let url = URL(string: "https://apis.randstad.es/a")!
+        #expect(LogEvent.request(id: "a", method: "GET", url: url, headers: nil, body: nil).channel.category == "http")
+        #expect(LogEvent.wsPing(id: "a").channel.category == "websocket")
+        #expect(LogEvent.auth(type: "TokenAuth", name: "api", detail: "x").channel.category == "auth")
+        #expect(LogEvent.codingFailed(id: "a", what: "x", detail: "y").channel.category == "error")
+        #expect(LogEvent.wsPing(id: "a").channel.subsystem === LogSubsystem.beam)
+        #expect(LogSubsystem.beam.name == "com.beam")
     }
 
     @Test
@@ -38,15 +41,15 @@ struct LoggingTests {
 
         #expect(succeeded.rendered(bodies: false).contains("video-42"))
         #expect(succeeded.rendered(bodies: false).contains("/{userID}/documents"))
-        #expect(succeeded.meta.level == .info)
+        #expect(succeeded.level == .info)
         #expect(failed.rendered(bodies: false).contains("The network connection was lost."))
-        #expect(failed.meta.level == .warning)
-        #expect(LogEvent.backgroundFinished(id: "x", method: "GET", path: "/", status: 404, failure: nil).meta.level == .warning)
+        #expect(failed.level == .warning)
+        #expect(LogEvent.backgroundFinished(id: "x", method: "GET", path: "/", status: 404, failure: nil).level == .warning)
     }
 
     @Test
     func aDownloadIsLoggedWithItsSuggestedNameAndSize() {
-        let event = LogEvent.response(id: "a1", status: 200, headers: [:], body: .file(name: "report.pdf", bytes: 2048), start: Date())
+        let event = LogEvent.response(id: "a1", status: 200, headers: [:], body: .file(name: "report.pdf", bytes: 2048), elapsed: .zero)
         let rendered = event.rendered(bodies: false)
         #expect(rendered.contains("report.pdf"))
         #expect(rendered.contains(2048.byteFormatted))
@@ -56,24 +59,12 @@ struct LoggingTests {
     @Test
     func bodiesAreShownAtDebugLevelAndAlwaysForErrorResponses() {
         func response(_ status: Int, bodies: Bool) -> String {
-            LogEvent.response(id: "a1", status: status, headers: [:], body: .data(Data(#"{"name":"Ana"}"#.utf8)), start: Date())
+            LogEvent.response(id: "a1", status: status, headers: [:], body: .data(Data(#"{"name":"Ana"}"#.utf8)), elapsed: .zero)
                 .rendered(bodies: bodies)
         }
         #expect(response(200, bodies: true).contains("Ana"))
         #expect(!response(200, bodies: false).contains("Ana"))
         #expect(response(404, bodies: false).contains("Ana"))
-        #expect(BeamLogger(level: .debug).logs(.debug, global: .warning))
-        #expect(!BeamLogger(level: .info).logs(.debug, global: .debug))
-    }
-
-    /// A global `.off` silences every log, also an API's with its own level.
-    @Test
-    func aGlobalOffSilencesAnAPIWithItsOwnLevel() {
-        let api = BeamLogger(level: .debug)
-        #expect(api.logs(.info, global: .error))
-        #expect(!api.logs(.error, global: .off))
-        #expect(!BeamLogger().logs(.error, global: .off))
-        #expect(!BeamLogger(level: .off).logs(.error, global: .debug))
     }
 
     /// A request and its response line up by column, whatever the length of the method.
@@ -81,7 +72,7 @@ struct LoggingTests {
     func aRequestAndItsResponseLineUpByColumn() {
         let request = LogEvent.request(id: "A1F3", method: "DELETE", url: URL(string: "https://apis.randstad.es/a")!, headers: nil, body: nil)
             .rendered(bodies: false)
-        let response = LogEvent.response(id: "A1F3", status: 404, headers: [:], body: .none, start: Date())
+        let response = LogEvent.response(id: "A1F3", status: 404, headers: [:], body: .none, elapsed: .zero)
             .rendered(bodies: false)
         func start(of text: String, in log: String) -> Int {
             let line = log.prefix { $0 != "\n" }
@@ -92,18 +83,9 @@ struct LoggingTests {
         #expect(!request.contains("\t"))
     }
 
-    /// A value longer than its column pushes the next one, which never gets closer than the gap.
-    @Test
-    func aLongColumnKeepsTheGap() {
-        #expect(LogColumns.align("a\tb") == "a" + String(repeating: " ", count: 6 + LogColumns.gap) + "b")
-        #expect(LogColumns.align("abcdefghij\tb") == "abcdefghij" + String(repeating: " ", count: LogColumns.gap) + "b")
-        #expect(LogColumns.align("􀁶 A1F3\tb") == "􀁶 A1F3" + String(repeating: " ", count: LogColumns.gap) + "b")
-        #expect(LogColumns.align("a\t") == "a")
-    }
-
     @Test
     func aRejectedCredentialIsLoggedAtDebugLevel() {
-        #expect(LogEvent.auth(type: "StaticAuth", name: "api", detail: "rejected", level: .debug).meta.level == .debug)
-        #expect(LogEvent.auth(type: "TokenAuth", name: "api", detail: "refreshing").meta.level == .info)
+        #expect(LogEvent.auth(type: "StaticAuth", name: "api", detail: "rejected", level: .debug).level == .debug)
+        #expect(LogEvent.auth(type: "TokenAuth", name: "api", detail: "refreshing").level == .info)
     }
 }

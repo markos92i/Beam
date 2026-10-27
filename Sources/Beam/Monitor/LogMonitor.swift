@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Logy
 
 struct LogMonitor: Monitor {
     let log: BeamLogger

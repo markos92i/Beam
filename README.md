@@ -34,7 +34,7 @@ A networking library for iOS built on Swift macros. `@API` turns a protocol into
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/markos92i/Beam.git", from: "1.0.0")
+    .package(url: "https://github.com/markos92i/Beam.git", from: "2.0.0")
 ]
 ```
 
@@ -91,7 +91,7 @@ Arguments go in this order:
 | `config` | `RequestConfig` | `.standard` | once |
 | `socket` | `SocketConfig` | `.standard` | once |
 | `interceptors` | `[any Interceptor]` | `[]` | once |
-| `logLevel` | `LogLevel?` | `nil` (uses `BeamLogger.level`) | once |
+| `logLevel` | `LogLevel?` | `nil` (uses `LogSubsystem.beam.level`) | once |
 
 "Once" values are built when the API's first client is created, and shared by all its clients. `host`, `base` and `headers` are re-evaluated on every request, so `headers: AppHeaders.current` always reflects the current state (signed-in user, device id…). They run on any thread: keep them cheap and thread-safe. `background:` is described in [Background transfers](#background-transfers), `socket:` in [WebSocket](#websocket). Either one on an API with no routes that use it is a compile warning.
 
@@ -602,7 +602,7 @@ struct CertificatePinning: TransportTrustPolicy {
 
 ## Authentication
 
-Auth signs each attempt after the API's interceptors, so a signature sees the final request. When an API with an auth provider gets a `401`, Beam calls `invalidate()` and repeats the call once; that repeat doesn't count against the `RetryPolicy` (monitors see it as `willRetry` with zero delay). Without a provider, a `401` is a plain `.http(status: .unauthorized)`. Providers log with the global `BeamLogger.level`, since several APIs share them.
+Auth signs each attempt after the API's interceptors, so a signature sees the final request. When an API with an auth provider gets a `401`, Beam calls `invalidate()` and repeats the call once; that repeat doesn't count against the `RetryPolicy` (monitors see it as `willRetry` with zero delay). Without a provider, a `401` is a plain `.http(status: .unauthorized)`. Providers log with `LogSubsystem.beam.level`, since several APIs share them.
 
 ### TokenAuth
 
@@ -766,18 +766,25 @@ if case .http(_, let body, let response?) = error, let page = body.data, let url
 
 ## Logging
 
-Beam logs to the unified log (`os.Logger`, subsystem `com.beam`):
+Beam logs through [Logy](https://github.com/markos92i/Logy) to the unified log, subsystem `com.beam`, categories `http`, `websocket`, `auth` and `error`. Import Logy to change levels:
+
+```swift
+import Logy
+
+LogSubsystem.beam.level = .off   // silences all of Beam
+```
 
 | | Debug | Release |
 |---|---|---|
-| `BeamLogger.level` | `.debug` | `.warning` |
+| `LogSubsystem.beam.level` | `.debug` | `.warning` |
 | Message privacy | `.public` | `.private`: `<private>` without a logging profile |
 
 - `level` can change at runtime; privacy can't.
 - Bodies are logged at `.debug`, whole (JSON pretty-printed). Above it a body shows only its size, except an error response (status ≥ 400), which always shows its own.
-- `@API(logLevel:)` sets the minimum level of everything an API's calls log. APIs without it use `BeamLogger.level`, and so do auth providers and background sessions (including transfers nobody awaits). `BeamLogger.level = .off` silences every Beam log, including APIs with their own `logLevel`.
+- `@API(logLevel:)` sets the minimum level of everything an API's calls log. APIs without it use `LogSubsystem.beam.level`, and so do auth providers and background sessions (including transfers nobody awaits). `LogSubsystem.beam.level = .off` silences every Beam log, including APIs with their own `logLevel`.
 - `.warning` and `.error` reach the unified log as `OSLogType.error`; Beam never logs `.fault`.
 - The first line of each entry is aligned in columns, so a request lines up with its response.
+- Each request is an interval in Instruments (os_signpost instrument, category `http`): `GET [A1F3] /path`, closed with the status. The path is private outside Debug.
 - `request.curl` renders a `URLRequest` as a copy-pasteable cURL command (`po request.curl` in LLDB).
 
 | Level | Logged |
@@ -859,7 +866,7 @@ Beam/
 ├── Model/         HTTPMethod, HTTPStatus, ContentType, RequestConfig, RetryPolicy, AuthPolicy
 ├── Coding/        JSONCoding, BodyDecoder, BodyRepresentable
 ├── Error/         APIError, APIErrorKind, HTTPErrorBody and the layer errors
-├── Logging/       BeamLogger and log formatting
+├── Logging/       Beam's log events and channels (on Logy)
 ├── Extensions/    URLRequest.curl
 └── Support/       File handling
 ```
