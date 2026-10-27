@@ -16,7 +16,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "604.0.0"),
-        .package(url: "https://github.com/markos92i/Logy.git", from: "1.0.0"),
+        .package(url: "https://github.com/markos92i/Logy.git", from: "1.0.1"),
     ],
     targets: [
         // Macro implementation (compiler plugin)
