@@ -360,7 +360,7 @@ try await api.uploadBackgroundTask(body: video).start(id: "video-\(videoID)") //
 
 ### Progress
 
-`onProgress` receives the call's `Progress` on the main actor before the transfer starts; a handle exposes it as `progress`. Read `fractionCompleted`: units are a fixed scale, not bytes. It is indeterminate while the size is unknown, and restarts on every attempt.
+`onProgress` receives the call's `Progress` on the main actor before the transfer starts; a handle exposes it as `progress`. Units are the body's bytes and upload/download handles are marked `kind = .file` with their `fileOperationKind`, so `ProgressView(progress)` shows the system's localized "Uploading files…" and "1,5 MB of 3 MB"; `fractionCompleted` is the share of the transfer. Set `fileTotalCount` to have it say how many files. It is indeterminate while the size is unknown, and restarts on every attempt.
 
 ```swift
 let file = try await api.file(id: "42", onProgress: { progress in self.progress = progress })

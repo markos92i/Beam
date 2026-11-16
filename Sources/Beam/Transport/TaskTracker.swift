@@ -25,11 +25,12 @@ final class TaskTracker: NSObject, URLSessionTaskDelegate, Sendable {
         track(task)
     }
 
-    /// `.initial`: the progress starts over with each task.
+    /// `.initial` seeds the current value; `.new` keeps firing as the task uploads, so the shared
+    /// progress tracks the transfer instead of freezing at its starting fraction.
     func track(_ task: URLSessionTask) {
         let progress = self.progress
         // A task without a progress is still kept, to be cancelled.
-        let observation = task.progressIfAny?.observe(\.fractionCompleted, options: [.initial]) { _, _ in
+        let observation = task.progressIfAny?.observe(\.fractionCompleted, options: [.initial, .new]) { _, _ in
             progress.follow(task)
         }
         let previous = state.withLock { state in
@@ -50,30 +51,41 @@ final class TaskTracker: NSObject, URLSessionTaskDelegate, Sendable {
 // MARK: - Progress of a transfer
 
 extension Progress {
-    /// A fixed scale, not bytes.
+    /// Scale while the body's size is still zero (a request not sent yet, a mocked task).
     static let transferUnits: Int64 = 1_000_000
 
     /// Copies the fraction: URLSession keeps the task's units at 5 of 100 and only `fractionCompleted` moves.
     func follow(_ task: URLSessionTask) {
         guard let taskProgress = task.progressIfAny else { return }
-        let expected = task is URLSessionUploadTask ? task.countOfBytesExpectedToSend : task.countOfBytesExpectedToReceive
+        let isUpload = task is URLSessionUploadTask
+        if isUpload || task is URLSessionDownloadTask { describeFileTransfer(isUpload ? .uploading : .downloading) }
+        let expected = isUpload ? task.countOfBytesExpectedToSend : task.countOfBytesExpectedToReceive
         follow(
             fraction: taskProgress.fractionCompleted,
-            sizeKnown: expected != NSURLSessionTransferSizeUnknown,
+            bytes: expected == NSURLSessionTransferSizeUnknown ? nil : expected,
             finished: task.state == .completed && task.error == nil
         )
     }
 
-    func follow(fraction: Double, sizeKnown: Bool, finished: Bool) {
+    /// Units are the body's bytes, so `localizedAdditionalDescription` reads "1,5 MB of 3 MB"; `nil` bytes is an unknown size.
+    func follow(fraction: Double, bytes: Int64?, finished: Bool) {
+        let units = bytes.map { $0 > 0 ? $0 : Self.transferUnits }
         if finished {
-            totalUnitCount = Self.transferUnits
-            completedUnitCount = Self.transferUnits
-        } else if sizeKnown {
-            totalUnitCount = Self.transferUnits
-            completedUnitCount = Int64((min(max(fraction, 0), 1) * Double(Self.transferUnits)).rounded(.down))
+            totalUnitCount = units ?? Self.transferUnits
+            completedUnitCount = totalUnitCount
+        } else if let units {
+            totalUnitCount = units
+            completedUnitCount = Int64((min(max(fraction, 0), 1) * Double(units)).rounded(.down))
         } else {
             totalUnitCount = -1
             completedUnitCount = 0
         }
+    }
+
+    /// Lets the system describe the transfer ("Uploading files…") in the user's language.
+    private func describeFileTransfer(_ operation: FileOperationKind) {
+        guard kind != .file || fileOperationKind != operation else { return }
+        kind = .file
+        fileOperationKind = operation
     }
 }

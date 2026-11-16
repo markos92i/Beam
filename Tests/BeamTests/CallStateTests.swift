@@ -238,20 +238,43 @@ struct CallStateTests {
     @Test
     func anUnknownSizeIsIndeterminate() {
         let progress = Progress()
-        progress.follow(fraction: 0.05, sizeKnown: false, finished: false)
+        progress.follow(fraction: 0.05, bytes: nil, finished: false)
         #expect(progress.isIndeterminate)
 
-        progress.follow(fraction: 0.05, sizeKnown: false, finished: true)
+        progress.follow(fraction: 0.05, bytes: nil, finished: true)
         #expect(!progress.isIndeterminate)
         #expect(progress.fractionCompleted == 1)
     }
 
     @Test
-    func theFractionUsesAFixedScale() {
+    func theUnitsAreTheBodyBytes() {
         let progress = Progress()
-        progress.follow(fraction: 0.25, sizeKnown: true, finished: false)
-        #expect(progress.totalUnitCount == Progress.transferUnits)
+        progress.follow(fraction: 0.25, bytes: 4_000, finished: false)
+        #expect(progress.totalUnitCount == 4_000)
+        #expect(progress.completedUnitCount == 1_000)
         #expect(progress.fractionCompleted == 0.25)
+
+        progress.follow(fraction: 0.25, bytes: 4_000, finished: true)
+        #expect(progress.completedUnitCount == 4_000)
+    }
+
+    /// Upload and download handles are file transfers, so the system can describe them.
+    @Test
+    func transfersAreDescribedAsFileOperations() {
+        let request = URLRequest(url: URL(string: "https://base-url.com/file")!)
+        let upload = Progress()
+        upload.follow(URLSession.shared.uploadTask(with: request, from: Data("x".utf8)))
+        #expect(upload.kind == .file)
+        #expect(upload.fileOperationKind == .uploading)
+
+        let download = Progress()
+        download.follow(URLSession.shared.downloadTask(with: request))
+        #expect(download.kind == .file)
+        #expect(download.fileOperationKind == .downloading)
+
+        let data = Progress()
+        data.follow(URLSession.shared.dataTask(with: request))
+        #expect(data.kind == nil)
     }
 
     /// `onProgress` gets the progress of the transfer it reports, not one of its own.

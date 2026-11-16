@@ -13,7 +13,7 @@ import Foundation
 public struct TransferTask<Success: Sendable, Failure: Sendable>: Sendable, Identifiable {
     /// The call's id, as in the logs.
     public var id: String { call.id }
-    /// Read `fractionCompleted`: units are a fixed scale, not bytes; it restarts on every attempt.
+    /// A file transfer measured in bytes (`ProgressView(progress)` shows the system's localized text); it restarts on every attempt.
     public var progress: Progress { call.client.progress }
     let call: Call<Success, Failure>
     let transfer: @Sendable (Call<Success, Failure>, _ resume: Data?) async throws(APIError<Failure>) -> Success
